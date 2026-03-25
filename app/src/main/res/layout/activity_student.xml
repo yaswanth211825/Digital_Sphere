@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="32dp"
+    android:background="#F5F5F5">
+
+    <TextView
+        android:text="🎓 Student Check-In"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:textColor="#1A1A2E"
+        android:layout_marginBottom="24dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"/>
+
+    <EditText
+        android:id="@+id/et_student_name"
+        android:hint="Enter your full name"
+        android:textSize="16sp"
+        android:inputType="textPersonName|textCapWords"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:padding="12dp"
+        android:gravity="center"
+        android:background="@android:color/white"/>
+
+    <EditText
+        android:id="@+id/et_session_id"
+        android:hint="Session name given by professor (e.g. CS101)"
+        android:textSize="16sp"
+        android:inputType="text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="28dp"
+        android:padding="12dp"
+        android:gravity="center"
+        android:background="@android:color/white"/>
+
+    <!-- Signal strength section — hidden until scanning starts -->
+    <LinearLayout
+        android:id="@+id/layout_signal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:layout_marginBottom="16dp">
+
+        <TextView
+            android:id="@+id/tv_signal_label"
+            android:text="Scanning..."
+            android:textSize="16sp"
+            android:textColor="#888888"
+            android:gravity="center"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"/>
+
+        <ProgressBar
+            android:id="@+id/pb_signal"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="18dp"
+            android:max="100"
+            android:progress="0"
+            android:progressTint="#2ECC71"
+            android:layout_marginBottom="6dp"/>
+
+        <TextView
+            android:id="@+id/tv_rssi"
+            android:text=""
+            android:textSize="12sp"
+            android:textColor="#AAAAAA"
+            android:gravity="center"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_status"
+        android:text="Status: Not scanning"
+        android:textSize="16sp"
+        android:textColor="#888888"
+        android:gravity="center"
+        android:layout_marginBottom="28dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <Button
+        android:id="@+id/btn_scan"
+        android:text="📡 Scan for Class"
+        android:textSize="16sp"
+        android:textColor="#FFFFFF"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:backgroundTint="#1A1A2E"/>
+
+</LinearLayout>

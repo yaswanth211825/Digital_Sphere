@@ -1,0 +1,36 @@
+# ── Android Studio IDE files (your personal settings, not code) ─
+*.iml
+.idea/
+.DS_Store
+
+# ── Build output (auto-generated, no need to share) ──────────
+/build
+app/build
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+*.ap_
+
+# ── Your computer's local settings ───────────────────────────
+# Contains YOUR Android SDK path — useless on another machine
+/local.properties
+local.properties
+
+# ── Gradle cache ──────────────────────────────────────────────
+.gradle
+gradle/wrapper/gradle-wrapper.jar
+
+# ── SECRETS: never commit these ───────────────────────────────
+# Firebase API key — share privately, not on GitHub
+app/google-services.json
+
+# Signing keys — like a password to publish your app
+*.keystore
+*.jks
+release.keystore
+keystore.properties
+
+# Log files
+*.log
