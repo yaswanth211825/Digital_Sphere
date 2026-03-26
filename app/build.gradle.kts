@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.google.services)           // reads google-services.json
-    alias(libs.plugins.firebase.appdistribution)  // enables appDistributionUploadDebug task
+    // google-services plugin removed — not needed without a Firebase runtime SDK.
+    // App Distribution is handled via Firebase CLI (see README / deploy instructions).
 }
 
 android {
@@ -27,17 +27,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-        }
-        debug {
-            // Firebase App Distribution config — runs on every debug upload
-            firebaseAppDistribution {
-                releaseNotes        = "Latest build — BLE attendance fixes applied."
-                // Add tester emails here, comma-separated.
-                // They get an email with a download link every time you upload.
-                testers             = "add-tester@gmail.com"
-                // Optional: create a group in Firebase Console and use it instead
-                // testerGroups = "qa-team"
-            }
         }
     }
     compileOptions {

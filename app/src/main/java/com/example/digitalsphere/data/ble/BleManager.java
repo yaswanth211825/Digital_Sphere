@@ -24,9 +24,10 @@ public class BleManager implements IBleManager {
 
     // ── Professor mode ────────────────────────────────────────────────────
 
+    // MODIFIED — passes pressure + token through to BleAdvertiser
     @Override
-    public void startProfessorMode(ProfessorBleListener listener) {
-        professorBeacon.start(new BleAdvertiser.Listener() {
+    public void startProfessorMode(float pressureHPa, int sessionToken, ProfessorBleListener listener) {
+        professorBeacon.start(pressureHPa, sessionToken, new BleAdvertiser.Listener() {
             @Override public void onStarted() {
                 post(listener::onBeaconStarted);
             }

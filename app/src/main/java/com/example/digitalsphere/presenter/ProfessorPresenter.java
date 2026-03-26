@@ -97,7 +97,9 @@ public class ProfessorPresenter {
 
         startTimer(durationMinutes);
 
-        bleManager.startProfessorMode(new IBleManager.ProfessorBleListener() {
+        // MODIFIED — pass 0.0f pressure and 0 token for now; the verification
+        // layer will supply real values once BarometerReader is wired in.
+        bleManager.startProfessorMode(0.0f, 0, new IBleManager.ProfessorBleListener() {
             @Override public void onBeaconStarted() {
                 if (view != null) {
                     view.setLoading(false);

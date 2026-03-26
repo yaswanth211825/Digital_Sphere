@@ -25,7 +25,8 @@ public interface IBleManager {
 
     // ── Operations ────────────────────────────────────────────────────────
 
-    void startProfessorMode(ProfessorBleListener listener);
+    // MODIFIED — now carries barometer + session token for multi-signal verification
+    void startProfessorMode(float pressureHPa, int sessionToken, ProfessorBleListener listener);
     void stopProfessorMode();
 
     void startStudentMode(String studentName, StudentBleListener listener);
