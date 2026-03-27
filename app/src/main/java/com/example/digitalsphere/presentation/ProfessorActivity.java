@@ -17,10 +17,12 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import com.example.digitalsphere.R;
 import com.example.digitalsphere.contract.IProfessorView;
+import com.example.digitalsphere.data.audio.AmbientAudioRecorder;
 import com.example.digitalsphere.data.audio.UltrasoundEmitter;
 import com.example.digitalsphere.data.sensor.BarometerReader;
 import com.example.digitalsphere.data.sensor.ResearchLogger;
 import com.example.digitalsphere.domain.SessionManager;
+import com.example.digitalsphere.domain.model.ValidationResult;
 import com.example.digitalsphere.presenter.ProfessorPresenter;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +36,10 @@ import java.util.Locale;
  * pressure display and BLE payload embedding.
  */
 public class ProfessorActivity extends AppCompatActivity implements IProfessorView {
+
+    private static final String EXTRA_AUTO_SESSION = "auto_session"; // NEW
+    private static final String EXTRA_AUTO_DURATION = "auto_duration"; // NEW
+    private static final String EXTRA_AUTO_START = "auto_start"; // NEW
 
     private ProfessorPresenter presenter;
     private final SessionManager sessionManager = new SessionManager();
@@ -56,6 +62,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
 
     /** Session ultrasound emitter — active while a real session is running. */
     private UltrasoundEmitter sessionEmitter;
+    private AmbientAudioRecorder sessionAmbientRecorder;
 
     // Views
     private EditText    etSessionName;
@@ -122,52 +129,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
         // SPRINT-1-UI: Initialize all sensors and show availability
         initSensors();
 
-        btnStart.setOnClickListener(v -> {
-            String sessionName = etSessionName.getText().toString().trim();
-            String normalizedSessionId = sessionManager.createSessionId(sessionName);
-
-            // ── Ultrasound: derive token + start emitting BEFORE BLE starts ──
-            // The token must be known before we call startSession() so it can
-            // be embedded in the BLE manufacturer data payload.
-            int sessionToken = -1;
-            if (micAvailable) {
-                // Stop any previous session emitter
-                if (sessionEmitter != null) {
-                    sessionEmitter.stopEmitting();
-                    sessionEmitter = null;
-                }
-
-                sessionEmitter = new UltrasoundEmitter(normalizedSessionId, new UltrasoundEmitter.EmitterCallback() {
-                    @Override
-                    public void onEmissionStarted() {
-                        runOnUiThread(() -> {
-                            tvUltrasoundStatus.setText("🔊 Ultrasound: ✅ Emitting (token: "
-                                    + sessionEmitter.getSessionToken() + ")");
-                            tvUltrasoundStatus.setTextColor(Color.parseColor("#2ECC71"));
-                        });
-                    }
-
-                    @Override
-                    public void onEmissionFailed(String reason) {
-                        runOnUiThread(() -> {
-                            tvUltrasoundStatus.setText("🔊 Ultrasound: ❌ Failed — " + reason);
-                            tvUltrasoundStatus.setTextColor(Color.parseColor("#E74C3C"));
-                            updateSensorSummary();
-                        });
-                    }
-                });
-
-                sessionToken = sessionEmitter.getSessionToken();
-                sessionEmitter.startEmitting();
-            }
-
-            // SPRINT-1-UI: Pass current pressure + real ultrasound token to presenter
-            presenter.startSession(
-                    sessionName,
-                    etDuration.getText().toString().trim(),
-                    currentPressureHPa,
-                    sessionToken);
-        });
+        btnStart.setOnClickListener(v -> beginSessionStart());
 
         btnStop.setOnClickListener(v -> presenter.stopSession());
 
@@ -175,6 +137,28 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
 
         // DEBUG: Temporary ultrasound test — REMOVE after hardware verification
         initDebugUltrasoundButton();
+        applyAutomationExtras(); // NEW
+    }
+
+    private void ensureSessionPlaybackVolume() { // NEW
+        AudioManager audioMgr = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (audioMgr == null) return;
+
+        int currentVol = audioMgr.getStreamVolume(AudioManager.STREAM_MUSIC);
+        int maxVol = audioMgr.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int recommendedVol = Math.max(1, Math.round(maxVol * 0.7f));
+
+        if (currentVol < recommendedVol) {
+            audioMgr.setStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    recommendedVol,
+                    AudioManager.FLAG_SHOW_UI);
+
+            Toast.makeText(
+                    this,
+                    "Raised media volume for ultrasound session playback.",
+                    Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override
@@ -189,12 +173,115 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
             sessionEmitter.stopEmitting();
             sessionEmitter = null;
         }
+        if (sessionAmbientRecorder != null) {
+            sessionAmbientRecorder.shutdown();
+            sessionAmbientRecorder = null;
+        }
         // DEBUG: Stop ultrasound test if running
         if (debugEmitter != null) {
             debugEmitter.stopEmitting();
             debugEmitter = null;
         }
         presenter.detach();
+    }
+
+    private void beginSessionStart() { // NEW
+        String sessionName = etSessionName.getText().toString().trim();
+        String rawDuration = etDuration.getText().toString().trim();
+        String normalizedSessionId = sessionManager.createSessionId(sessionName);
+        ValidationResult nameResult = sessionManager.validateSessionName(sessionName);
+        if (!nameResult.isValid()) {
+            showError(nameResult.getMessage());
+            return;
+        }
+        try {
+            sessionManager.parseDuration(rawDuration);
+        } catch (IllegalArgumentException e) {
+            showError(e.getMessage());
+            return;
+        }
+
+        if (!micAvailable) {
+            continueSessionStart(sessionName, rawDuration, normalizedSessionId, null);
+            return;
+        }
+
+        btnStart.setEnabled(false);
+        tvAudioStatus.setText("🎵 Audio: Capturing ambient reference...");
+        tvAudioStatus.setTextColor(Color.parseColor("#F39C12"));
+
+        if (sessionAmbientRecorder != null) {
+            sessionAmbientRecorder.shutdown();
+        }
+        sessionAmbientRecorder = new AmbientAudioRecorder();
+        sessionAmbientRecorder.recordAndFingerprint(new AmbientAudioRecorder.RecordingCallback() {
+            @Override
+            public void onFingerprintReady(float[] hash) {
+                runOnUiThread(() -> {
+                    tvAudioStatus.setText("🎵 Audio: ✅ Ambient reference captured");
+                    tvAudioStatus.setTextColor(Color.parseColor("#2ECC71"));
+                    continueSessionStart(sessionName, rawDuration, normalizedSessionId, hash);
+                });
+            }
+
+            @Override
+            public void onRecordingFailed(String reason) {
+                runOnUiThread(() -> {
+                    tvAudioStatus.setText("🎵 Audio: ⚠️ Reference capture failed — continuing without audio");
+                    tvAudioStatus.setTextColor(Color.parseColor("#F39C12"));
+                    Toast.makeText(
+                            ProfessorActivity.this,
+                            "Ambient audio reference failed: " + reason,
+                            Toast.LENGTH_SHORT).show();
+                    continueSessionStart(sessionName, rawDuration, normalizedSessionId, null);
+                });
+            }
+        });
+    }
+
+    private void continueSessionStart(String sessionName,
+                                      String rawDuration,
+                                      String normalizedSessionId,
+                                      float[] ambientHash) { // NEW
+        int sessionToken = -1;
+        if (micAvailable) {
+            ensureSessionPlaybackVolume();
+
+            if (sessionEmitter != null) {
+                sessionEmitter.stopEmitting();
+                sessionEmitter = null;
+            }
+
+            sessionEmitter = new UltrasoundEmitter(normalizedSessionId, new UltrasoundEmitter.EmitterCallback() {
+                @Override
+                public void onEmissionStarted() {
+                    runOnUiThread(() -> {
+                        tvUltrasoundStatus.setText("🔊 Ultrasound: ✅ Emitting (token: "
+                                + sessionEmitter.getSessionToken() + ")");
+                        tvUltrasoundStatus.setTextColor(Color.parseColor("#2ECC71"));
+                    });
+                }
+
+                @Override
+                public void onEmissionFailed(String reason) {
+                    runOnUiThread(() -> {
+                        tvUltrasoundStatus.setText("🔊 Ultrasound: ❌ Failed — " + reason);
+                        tvUltrasoundStatus.setTextColor(Color.parseColor("#E74C3C"));
+                        updateSensorSummary();
+                    });
+                }
+            });
+
+            sessionToken = sessionEmitter.getSessionToken();
+            sessionEmitter.startEmitting();
+        }
+
+        presenter.startSession(
+                sessionName,
+                rawDuration,
+                currentPressureHPa,
+                sessionToken,
+                ambientHash);
     }
 
     // ── DEBUG: Temporary ultrasound test — REMOVE after hardware verification ──
@@ -314,6 +401,22 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
 
             }, 500); // 500ms delay to let the audible beep finish
         });
+    }
+
+    private void applyAutomationExtras() { // NEW
+        String autoSession = getIntent() != null ? getIntent().getStringExtra(EXTRA_AUTO_SESSION) : null;
+        String autoDuration = getIntent() != null ? getIntent().getStringExtra(EXTRA_AUTO_DURATION) : null;
+        boolean autoStart = getIntent() != null && getIntent().getBooleanExtra(EXTRA_AUTO_START, false);
+
+        if (autoSession != null && !autoSession.trim().isEmpty()) {
+            etSessionName.setText(autoSession.trim());
+        }
+        if (autoDuration != null && !autoDuration.trim().isEmpty()) {
+            etDuration.setText(autoDuration.trim());
+        }
+        if (autoStart) {
+            new Handler(Looper.getMainLooper()).postDelayed(() -> btnStart.performClick(), 1200L);
+        }
     }
 
     /** Resets the ultrasound debug button to its default state. */
@@ -520,6 +623,10 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
                 tvUltrasoundStatus.setText("🔊 Ultrasound: ✅ Ready (emitter on this device)");
                 tvUltrasoundStatus.setTextColor(Color.parseColor("#2ECC71"));
             }
+        }
+        if (sessionAmbientRecorder != null) {
+            sessionAmbientRecorder.shutdown();
+            sessionAmbientRecorder = null;
         }
 
         // SPRINT-1-UI: Reset BLE status in sensor card

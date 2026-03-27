@@ -16,7 +16,7 @@ class BleScanner {
 
     interface Listener {
         void onResult(int rssi, boolean inRange);
-        void onProfessorMetadata(float pressureHPa, int sessionToken);
+        void onProfessorMetadata(float pressureHPa, int sessionToken, float[] ambientHash);
         void onError(String reason);
     }
 
@@ -57,7 +57,8 @@ class BleScanner {
                 }
                 listener.onProfessorMetadata(
                         BleAdvertiser.unpackPressure(payload),
-                        BleAdvertiser.unpackToken(payload));
+                        BleAdvertiser.unpackToken(payload),
+                        BleAdvertiser.unpackAmbientHash(payload));
                 listener.onResult(rssi, rssi >= RSSI_THRESHOLD);
             }
             @Override

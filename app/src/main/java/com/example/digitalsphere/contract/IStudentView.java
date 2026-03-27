@@ -1,5 +1,7 @@
 package com.example.digitalsphere.contract;
 
+import com.example.digitalsphere.domain.verification.VerificationResult; // NEW
+
 /**
  * View contract for the Student screen.
  */
@@ -47,6 +49,38 @@ public interface IStudentView {
      * @param reason       human-readable explanation (empty if PRESENT).
      */
     void showVerificationOutcome(String status, float fusionScore, String reason);
+
+    // MODIFIED: New step-by-step verification hooks for the sequential student flow.
+
+    /**
+     * Shows which verification stage is currently running.
+     *
+     * <p>Default no-op keeps older test doubles source-compatible while the
+     * new student verification flow is rolled out.</p>
+     */
+    default void showVerificationStep(String stepName, int stepNumber, int totalSteps) {} // NEW
+
+    /**
+     * Displays the structured verification result.
+     *
+     * <p>Default implementation bridges to the legacy string-based outcome
+     * method so existing tests and fallback UIs still receive the result.</p>
+     */
+    default void showVerificationResult(VerificationResult result) { // NEW
+        if (result == null) return;
+        showVerificationOutcome(
+                result.getStatus().name(),
+                result.getFusionScore(),
+                result.getRejectionReason());
+    }
+
+    /**
+     * Shows a verification-specific error without forcing callers to decide
+     * whether it should be surfaced as a generic error or status update.
+     */
+    default void showVerificationError(String error) { // NEW
+        showError(error);
+    }
 
     // ── Errors / status ───────────────────────────────────────────────────
 

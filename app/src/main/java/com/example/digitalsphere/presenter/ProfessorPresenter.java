@@ -84,16 +84,20 @@ public class ProfessorPresenter {
 
     // SPRINT-1-UI: Overload for backward compatibility (tests call 2-arg version)
     public void startSession(String rawName, String rawDuration) {
-        startSession(rawName, rawDuration, 0.0f, -1);
+        startSession(rawName, rawDuration, 0.0f, -1, null);
     }
 
     // Backward compat — 3-arg version (no token)
     public void startSession(String rawName, String rawDuration, float pressureHPa) {
-        startSession(rawName, rawDuration, pressureHPa, -1);
+        startSession(rawName, rawDuration, pressureHPa, -1, null);
     }
 
     // Main entry point — accepts barometric pressure AND ultrasound token
     public void startSession(String rawName, String rawDuration, float pressureHPa, int sessionToken) {
+        startSession(rawName, rawDuration, pressureHPa, sessionToken, null);
+    }
+
+    public void startSession(String rawName, String rawDuration, float pressureHPa, int sessionToken, float[] ambientHash) {
         if (view == null) return;
 
         ValidationResult nameResult = sessionManager.validateSessionName(rawName);
@@ -125,7 +129,7 @@ public class ProfessorPresenter {
 
         // SPRINT-1-UI: Pass real barometric pressure + ultrasound token to BLE payload.
         // pressureHPa 0.0f = "barometer unavailable"; sessionToken -1 = "ultrasound inactive".
-        bleManager.startProfessorMode(pressureHPa, sessionToken, new IBleManager.ProfessorBleListener() {
+        bleManager.startProfessorMode(pressureHPa, sessionToken, ambientHash, new IBleManager.ProfessorBleListener() {
             @Override public void onBeaconStarted() {
                 if (view != null) {
                     view.setLoading(false);

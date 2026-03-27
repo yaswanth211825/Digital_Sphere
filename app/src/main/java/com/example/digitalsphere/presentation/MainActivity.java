@@ -36,6 +36,12 @@ import java.util.List;
  */
 public class MainActivity extends AppCompatActivity {
 
+    private static final String EXTRA_AUTO_ROLE = "auto_role"; // NEW
+    private static final String EXTRA_AUTO_NAME = "auto_name"; // NEW
+    private static final String EXTRA_AUTO_SESSION = "auto_session"; // NEW
+    private static final String EXTRA_AUTO_DURATION = "auto_duration"; // NEW
+    private static final String EXTRA_AUTO_START = "auto_start"; // NEW
+
     /** Request code for mandatory BLE permissions. */
     private static final int RC_PERMISSIONS = 100;
 
@@ -43,6 +49,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int RC_OPTIONAL    = 101;
 
     private Intent pendingIntent;
+    private Intent automationIntent; // NEW
 
     /** Tracks whether we've already asked for optional permissions this session. */
     private boolean optionalPermissionsRequested = false;
@@ -84,6 +91,8 @@ public class MainActivity extends AppCompatActivity {
             checkAndNavigate();
         });
 
+        maybeStartAutomationFlow(); // NEW
+
         // Request mandatory (BLE) permissions on launch
         if (!hasMandatoryPermissions()) requestMandatoryPermissions();
     }
@@ -121,6 +130,33 @@ public class MainActivity extends AppCompatActivity {
         // All checks passed — navigate
         startActivity(pendingIntent);
         pendingIntent = null;
+    }
+
+    private void maybeStartAutomationFlow() { // NEW
+        Intent launchIntent = getIntent();
+        if (launchIntent == null) return;
+
+        String role = launchIntent.getStringExtra(EXTRA_AUTO_ROLE);
+        if (role == null || role.trim().isEmpty()) return;
+
+        Intent target;
+        if ("professor".equalsIgnoreCase(role)) {
+            target = new Intent(this, ProfessorActivity.class);
+            target.putExtra(EXTRA_AUTO_SESSION, launchIntent.getStringExtra(EXTRA_AUTO_SESSION));
+            target.putExtra(EXTRA_AUTO_DURATION, launchIntent.getStringExtra(EXTRA_AUTO_DURATION));
+            target.putExtra(EXTRA_AUTO_START, launchIntent.getBooleanExtra(EXTRA_AUTO_START, false));
+        } else if ("student".equalsIgnoreCase(role)) {
+            target = new Intent(this, StudentActivity.class);
+            target.putExtra(EXTRA_AUTO_NAME, launchIntent.getStringExtra(EXTRA_AUTO_NAME));
+            target.putExtra(EXTRA_AUTO_SESSION, launchIntent.getStringExtra(EXTRA_AUTO_SESSION));
+            target.putExtra(EXTRA_AUTO_START, launchIntent.getBooleanExtra(EXTRA_AUTO_START, false));
+        } else {
+            return;
+        }
+
+        automationIntent = target;
+        pendingIntent = target;
+        checkAndNavigate();
     }
 
     // ── Permission helpers ─────────────────────────────────────────────────

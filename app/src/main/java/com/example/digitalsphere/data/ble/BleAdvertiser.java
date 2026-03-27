@@ -18,7 +18,7 @@ import java.nio.ByteOrder;                      // NEW — for consistent endian
  *   Flags .............. 3 bytes
  *   16-bit UUID list ... 4 bytes  (SESSION_UUID → 0xABCD)
  *   Manufacturer header  4 bytes  (length + type + company ID 0xFFFF)
- *   Manufacturer data .. 4 bytes  ← NEW: [pressure 2B][token 2B]
+ *   Manufacturer data .. 12 bytes ← [pressure 2B][token 2B][audio hash 8B]
  *                       ────────
  *                        15 bytes used → 16 bytes spare (well within budget)
  *
@@ -44,7 +44,9 @@ class BleAdvertiser {
     // NEW — byte offsets within the manufacturer data payload
     private static final int OFFSET_PRESSURE = 0;   // bytes 0-1
     private static final int OFFSET_TOKEN    = 2;   // bytes 2-3
-    static final int HEADER_SIZE             = 4;    // total header bytes
+    private static final int OFFSET_AUDIO    = 4;   // bytes 4-11
+    private static final int AUDIO_HASH_BYTES = 8;
+    static final int HEADER_SIZE             = 12;    // total header bytes
 
     interface Listener {
         void onStarted();
@@ -65,7 +67,7 @@ class BleAdvertiser {
      *                     ultrasound is not yet active.
      * @param listener     lifecycle callbacks.
      */
-    void start(float pressureHPa, int sessionToken, Listener listener) {
+    void start(float pressureHPa, int sessionToken, float[] ambientHash, Listener listener) {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null || !adapter.isEnabled()) {
             listener.onFailed("Bluetooth is not enabled. Please turn on Bluetooth.");
@@ -82,7 +84,7 @@ class BleAdvertiser {
         }
 
         // NEW — pack pressure + token into 4 bytes of manufacturer data
-        byte[] payload = packPayload(pressureHPa, sessionToken);
+        byte[] payload = packPayload(pressureHPa, sessionToken, ambientHash);
 
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -132,16 +134,22 @@ class BleAdvertiser {
      * @param token       16-bit session token. Masked to 0xFFFF.
      * @return 4-byte array: [pressure_hi, pressure_lo, token_hi, token_lo].
      */
-    static byte[] packPayload(float pressureHPa, int token) {
+    static byte[] packPayload(float pressureHPa, int token, float[] ambientHash) {
         // Clamp to unsigned 16-bit range: 0 .. 65535 → 0.0 .. 6553.5 hPa
         int pressureEncoded = Math.max(0, Math.min(65535, (int) (pressureHPa * 10)));
         int tokenEncoded = token >= 0 ? ((token & 0xFFFF) + 1) : 0;
 
-        return ByteBuffer.allocate(HEADER_SIZE)
+        ByteBuffer buffer = ByteBuffer.allocate(HEADER_SIZE)
                 .order(ByteOrder.BIG_ENDIAN)
                 .putShort((short) pressureEncoded)
-                .putShort((short) tokenEncoded)
-                .array();
+                .putShort((short) tokenEncoded);
+
+        for (int i = 0; i < AUDIO_HASH_BYTES; i++) {
+            float value = (ambientHash != null && i < ambientHash.length) ? ambientHash[i] : 0f;
+            int quantized = Math.max(0, Math.min(255, Math.round(value * 255f)));
+            buffer.put((byte) quantized);
+        }
+        return buffer.array();
     }
 
     /**
@@ -177,6 +185,19 @@ class BleAdvertiser {
                 .order(ByteOrder.BIG_ENDIAN)
                 .getShort() & 0xFFFF;
         return raw == 0 ? -1 : raw - 1;
+    }
+
+    static float[] unpackAmbientHash(byte[] data) {
+        if (data == null || data.length < OFFSET_AUDIO + AUDIO_HASH_BYTES) return null;
+
+        float[] hash = new float[AUDIO_HASH_BYTES];
+        boolean anyNonZero = false;
+        for (int i = 0; i < AUDIO_HASH_BYTES; i++) {
+            int raw = data[OFFSET_AUDIO + i] & 0xFF;
+            hash[i] = raw / 255f;
+            anyNonZero = anyNonZero || raw != 0;
+        }
+        return anyNonZero ? hash : null;
     }
 
     // ── Unchanged ─────────────────────────────────────────────────────────

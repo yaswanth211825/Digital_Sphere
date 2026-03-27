@@ -17,14 +17,16 @@ public class FakeBleManager implements IBleManager {
     public String  lastStudentName;
     public float   lastPressureHPa;       // MODIFIED
     public int     lastSessionToken;       // MODIFIED
+    public float[] lastAmbientHash;
 
     // MODIFIED — signature now includes pressure + token
     @Override
-    public void startProfessorMode(float pressureHPa, int sessionToken, ProfessorBleListener listener) {
+    public void startProfessorMode(float pressureHPa, int sessionToken, float[] ambientHash, ProfessorBleListener listener) {
         this.professorListener    = listener;
         this.professorModeStarted = true;
         this.lastPressureHPa      = pressureHPa;
         this.lastSessionToken     = sessionToken;
+        this.lastAmbientHash      = ambientHash;
     }
 
     @Override

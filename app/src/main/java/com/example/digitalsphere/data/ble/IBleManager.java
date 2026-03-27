@@ -27,13 +27,13 @@ public interface IBleManager {
         void onBeaconStarted();
         void onError(String reason);
 
-        default void onProfessorMetadata(float pressureHPa, int sessionToken) {}
+        default void onProfessorMetadata(float pressureHPa, int sessionToken, float[] ambientHash) {}
     }
 
     // ── Operations ────────────────────────────────────────────────────────
 
     // MODIFIED — now carries barometer + session token for multi-signal verification
-    void startProfessorMode(float pressureHPa, int sessionToken, ProfessorBleListener listener);
+    void startProfessorMode(float pressureHPa, int sessionToken, float[] ambientHash, ProfessorBleListener listener);
     void stopProfessorMode();
 
     void startStudentMode(String studentName, StudentBleListener listener);

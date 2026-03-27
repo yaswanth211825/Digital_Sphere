@@ -26,8 +26,8 @@ public class BleManager implements IBleManager {
 
     // MODIFIED — passes pressure + token through to BleAdvertiser
     @Override
-    public void startProfessorMode(float pressureHPa, int sessionToken, ProfessorBleListener listener) {
-        professorBeacon.start(pressureHPa, sessionToken, new BleAdvertiser.Listener() {
+    public void startProfessorMode(float pressureHPa, int sessionToken, float[] ambientHash, ProfessorBleListener listener) {
+        professorBeacon.start(pressureHPa, sessionToken, ambientHash, new BleAdvertiser.Listener() {
             @Override public void onStarted() {
                 post(listener::onBeaconStarted);
             }
@@ -64,8 +64,8 @@ public class BleManager implements IBleManager {
             @Override public void onResult(int rssi, boolean inRange) {
                 post(() -> listener.onSignalUpdate(rssi, inRange));
             }
-            @Override public void onProfessorMetadata(float pressureHPa, int sessionToken) {
-                post(() -> listener.onProfessorMetadata(pressureHPa, sessionToken));
+            @Override public void onProfessorMetadata(float pressureHPa, int sessionToken, float[] ambientHash) {
+                post(() -> listener.onProfessorMetadata(pressureHPa, sessionToken, ambientHash));
             }
             @Override public void onError(String reason) {
                 post(() -> listener.onError(reason));
