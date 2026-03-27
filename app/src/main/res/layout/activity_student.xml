@@ -1,19 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="32dp"
+    android:fillViewport="true"
     android:background="#F5F5F5">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp">
 
     <TextView
         android:text="🎓 Student Check-In"
         android:textSize="26sp"
         android:textStyle="bold"
         android:textColor="#1A1A2E"
-        android:layout_marginBottom="24dp"
-        android:layout_width="wrap_content"
+        android:gravity="center"
+        android:layout_marginBottom="20dp"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 
     <EditText
@@ -35,10 +40,203 @@
         android:inputType="text"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="28dp"
+        android:layout_marginBottom="16dp"
         android:padding="12dp"
         android:gravity="center"
         android:background="@android:color/white"/>
+
+    <!-- Sensor Capabilities Banner — shows which sensors are available on this device -->
+    <LinearLayout
+        android:id="@+id/banner_sensor_caps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#FFF8E1"
+        android:padding="10dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_sensor_caps_title"
+            android:text="Device Sensors"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="#F57F17"
+            android:layout_marginBottom="4dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/tv_sensor_caps_detail"
+            android:text=""
+            android:textSize="12sp"
+            android:textColor="#795548"
+            android:lineSpacingExtra="2dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+    </LinearLayout>
+
+    <!-- Verification Status Panel — shows all verification checks -->
+    <LinearLayout
+        android:id="@+id/panel_verification"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@android:color/white"
+        android:padding="12dp"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:text="Verification Status"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="#1A1A2E"
+            android:layout_marginBottom="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <!-- Row 1: Floor Check (barometer) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="6dp">
+            <TextView
+                android:text="🌡️ Floor Check"
+                android:textSize="13sp"
+                android:textColor="#1A1A2E"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+            <TextView
+                android:id="@+id/tv_verify_floor"
+                android:text="—"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:gravity="end"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.5"/>
+        </LinearLayout>
+
+        <!-- Row 2: Room Check (ultrasound) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="6dp">
+            <TextView
+                android:text="🔊 Room Check"
+                android:textSize="13sp"
+                android:textColor="#1A1A2E"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+            <TextView
+                android:id="@+id/tv_verify_room"
+                android:text="—"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:gravity="end"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.5"/>
+        </LinearLayout>
+
+        <!-- Row 3: Audio Check (ambient correlation) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="6dp">
+            <TextView
+                android:text="🎵 Audio Check"
+                android:textSize="13sp"
+                android:textColor="#1A1A2E"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+            <TextView
+                android:id="@+id/tv_verify_audio"
+                android:text="—"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:gravity="end"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.5"/>
+        </LinearLayout>
+
+        <!-- Row 4: BLE Signal strength -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="6dp">
+            <TextView
+                android:text="📡 BLE Signal"
+                android:textSize="13sp"
+                android:textColor="#1A1A2E"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+            <TextView
+                android:id="@+id/tv_verify_ble"
+                android:text="—"
+                android:textSize="13sp"
+                android:textColor="#888888"
+                android:gravity="end"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.5"/>
+        </LinearLayout>
+
+        <!-- Divider before overall verdict -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E0E0E0"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp"/>
+
+        <!-- Row 5: Overall DSVF verdict -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <TextView
+                android:text="✅ Overall"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="#1A1A2E"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+            <TextView
+                android:id="@+id/tv_verify_overall"
+                android:text="—"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="#888888"
+                android:gravity="end"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.5"/>
+        </LinearLayout>
+
+        <!-- Verification detail / reason -->
+        <TextView
+            android:id="@+id/tv_verify_reason"
+            android:text=""
+            android:textSize="11sp"
+            android:textColor="#888888"
+            android:layout_marginTop="4dp"
+            android:visibility="gone"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+    </LinearLayout>
 
     <!-- Signal strength section — hidden until scanning starts -->
     <LinearLayout
@@ -47,7 +245,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:visibility="gone"
-        android:layout_marginBottom="16dp">
+        android:layout_marginBottom="12dp">
 
         <TextView
             android:id="@+id/tv_signal_label"
@@ -85,7 +283,7 @@
         android:textSize="16sp"
         android:textColor="#888888"
         android:gravity="center"
-        android:layout_marginBottom="28dp"
+        android:layout_marginBottom="16dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 
@@ -99,3 +297,4 @@
         android:backgroundTint="#1A1A2E"/>
 
 </LinearLayout>
+</ScrollView>

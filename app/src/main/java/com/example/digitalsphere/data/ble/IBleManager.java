@@ -7,6 +7,11 @@ package com.example.digitalsphere.data.ble;
  */
 public interface IBleManager {
 
+    interface BeaconListener {
+        void onStarted();
+        void onError(String reason);
+    }
+
     // ── Professor mode ────────────────────────────────────────────────────
 
     interface ProfessorBleListener {
@@ -21,6 +26,8 @@ public interface IBleManager {
         void onSignalUpdate(int rssi, boolean inRange);
         void onBeaconStarted();
         void onError(String reason);
+
+        default void onProfessorMetadata(float pressureHPa, int sessionToken) {}
     }
 
     // ── Operations ────────────────────────────────────────────────────────
@@ -31,4 +38,8 @@ public interface IBleManager {
 
     void startStudentMode(String studentName, StudentBleListener listener);
     void stopStudentMode();
+
+    default void startStudentBeacon(String studentName, BeaconListener listener) {
+        if (listener != null) listener.onStarted();
+    }
 }

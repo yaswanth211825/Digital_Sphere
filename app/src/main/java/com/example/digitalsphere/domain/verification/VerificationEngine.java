@@ -1,216 +1,184 @@
 package com.example.digitalsphere.domain.verification;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 /**
- * Orchestrates all verification signals into a single pass/fail attendance
- * decision with a weighted confidence score.
+ * Stateful orchestrator that wraps {@link DsvfAlgorithm} with session context
+ * and per-session history tracking.
  *
- * Signals evaluated (when available):
- * <ol>
- *   <li><b>BLE RSSI</b> — is the student's phone within Bluetooth range?</li>
- *   <li><b>Barometer delta</b> — are both devices on the same floor?</li>
- *   <li><b>Ultrasound detection</b> — can the student hear the professor's
- *       inaudible tone (proves line-of-sight proximity)?</li>
- *   <li><b>Audio correlation</b> — do both devices share the same ambient
- *       acoustic environment (same room)?</li>
- * </ol>
+ * <h3>Responsibilities</h3>
+ * <ul>
+ *   <li>Holds professor-side reference data (barometer, ultrasound token,
+ *       ambient hash) so the caller doesn't have to re-supply it every time.</li>
+ *   <li>Delegates all scoring to the stateless {@link DsvfAlgorithm}.</li>
+ *   <li>Accumulates a history of {@link VerificationResult}s for the current
+ *       session, enabling the professor to review all attempts.</li>
+ *   <li>Computes a rolling session accuracy estimate (fraction of PRESENT
+ *       or FLAGGED results out of total attempts).</li>
+ * </ul>
  *
- * Each signal contributes a weighted score to the aggregate confidence.
- * If a signal is unavailable (e.g. no barometer on a cheap phone) its weight
- * is redistributed to the remaining signals — the system degrades gracefully
- * instead of failing outright.
+ * <h3>Thread safety</h3>
+ * All public methods that read or write the history list are
+ * {@code synchronized}. Multiple student verification threads can safely
+ * call {@link #verify(SignalReading)} concurrently.
  *
- * Threshold: an aggregate confidence ≥ {@value #PASS_THRESHOLD} produces
- * {@link VerificationStatus#VERIFIED}; below that →
- * {@link VerificationStatus#UNVERIFIED} with a reason string listing which
- * signals failed.
+ * <h3>Lifecycle</h3>
+ * Create one {@code VerificationEngine} per attendance session. The professor
+ * supplies reference data at construction time. Each student check-in calls
+ * {@link #verify(SignalReading)} once.
  *
- * This class is <b>pure Java</b> — no Android imports, fully unit-testable.
+ * <p>Pure Java — no Android imports.</p>
  */
 public class VerificationEngine {
 
-    // ── Default weights (must sum to 1.0) ─────────────────────────────────
+    // ── Professor-side reference data (immutable after construction) ────
 
     /**
-     * BLE is the primary signal — it's always available if the student
-     * reaches this point. Heaviest weight.
+     * Professor's barometric pressure in hPa.
+     * {@link Float#NaN} if the professor's device has no barometer.
      */
-    private static final double W_BLE        = 0.35;
+    private final float professorPressureHPa;
 
     /**
-     * Ultrasound is the strongest co-location proof (cannot be relayed
-     * over the internet) but requires RECORD_AUDIO permission.
+     * The 4-bit OOK token derived from the session ID.
+     * −1 if ultrasound is not used in this session.
      */
-    private static final double W_ULTRASOUND = 0.30;
+    private final int expectedUltrasoundToken;
 
     /**
-     * Audio correlation is a solid "same room" check but depends on
-     * ambient noise level — silent exam halls produce low-confidence
-     * fingerprints.
+     * Professor's 8-band ambient audio fingerprint.
+     * {@code null} if audio fingerprinting is disabled.
      */
-    private static final double W_AUDIO      = 0.20;
+    private final float[] professorAmbientHash;
+
+    // ── Session history ─────────────────────────────────────────────────
 
     /**
-     * Barometer confirms same-floor — useful but narrow: it only
-     * rejects different-floor cheating, not same-floor-different-room.
+     * Ordered list of every verification result in this session.
+     * Guarded by {@code synchronized(this)}.
      */
-    private static final double W_BAROMETER  = 0.15;
+    private final List<VerificationResult> history = new ArrayList<>();
 
-    /** Aggregate score must reach this to pass. */
-    private static final double PASS_THRESHOLD = 0.60;
-
-    // ── Signal input holder ───────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════
+    //  Constructor
+    // ═════════════════════════════════════════════════════════════════════
 
     /**
-     * Mutable builder that collects individual signal results as they
-     * arrive from the data layer. Signals are asynchronous — BLE may
-     * arrive first, barometer second, audio last — so the presenter
-     * sets them incrementally and calls {@link VerificationEngine#evaluate}
-     * once all available signals are in.
+     * Creates a new engine for one attendance session.
+     *
+     * @param professorPressureHPa professor's barometric pressure in hPa.
+     *                             Pass {@link Float#NaN} if the professor's
+     *                             device has no barometer sensor.
+     * @param expectedUltrasoundToken the 4-bit OOK token for this session
+     *                                (0–15), or −1 if ultrasound is disabled.
+     * @param professorAmbientHash the professor's 8-band ambient audio hash,
+     *                             or {@code null} if audio is disabled.
+     *                             A defensive copy is made.
      */
-    public static class Signals {
-
-        /** BLE RSSI normalised to [0.0, 1.0] by the BLE layer.
-         *  -50 dBm → 1.0 (excellent), -90 dBm → 0.0 (out of range). */
-        public double bleScore      = -1;   // -1 = not yet collected
-
-        /** true if the barometer readings from both devices match (same floor). */
-        public boolean barometerMatch = false;
-
-        /** true if the hardware has a barometer at all. */
-        public boolean barometerAvailable = false;
-
-        /** true if the ultrasonic tone was detected by the student's mic. */
-        public boolean ultrasoundDetected = false;
-
-        /** true if the ultrasound system was active (mic permission granted). */
-        public boolean ultrasoundAvailable = false;
-
-        /** Cosine similarity from AudioCorrelator, in [0.0, 1.0]. */
-        public float audioSimilarity = -1f; // -1 = not yet collected
-
-        /** true if ambient audio recording was attempted. */
-        public boolean audioAvailable = false;
+    public VerificationEngine(float professorPressureHPa,
+                              int expectedUltrasoundToken,
+                              float[] professorAmbientHash) {
+        this.professorPressureHPa    = professorPressureHPa;
+        this.expectedUltrasoundToken = expectedUltrasoundToken;
+        this.professorAmbientHash    = copyOrNull(professorAmbientHash);
     }
 
-    /** Private constructor — use the static {@link #evaluate} method. */
-    private VerificationEngine() {}
-
-    // ── Public API ────────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════
+    //  Public API
+    // ═════════════════════════════════════════════════════════════════════
 
     /**
-     * Evaluates all collected signals and produces a single
-     * {@link VerificationResult}.
+     * Verifies a single student's attendance by running the DSVF algorithm.
      *
-     * Unavailable signals are excluded from scoring: their weight is
-     * redistributed proportionally to the available signals. This means
-     * a device with only BLE + ultrasound can still verify (at reduced
-     * confidence) without barometer or audio correlation.
+     * <p>The engine injects professor-side reference data (pressure, token,
+     * audio hash) into the reading if the student-side data is available
+     * but the reading doesn't already carry professor data. This lets the
+     * presenter build a minimal {@link SignalReading} with only student-side
+     * measurements.</p>
      *
-     * @param signals the collected signal data. Must not be null.
-     * @return an immutable {@link VerificationResult} with status,
-     *         confidence, and a human-readable reason.
+     * <p>The result is appended to the session history before returning.</p>
+     *
+     * @param studentReading the student's sensor snapshot. Must not be null.
+     * @return the DSVF result (also stored in history).
+     * @throws IllegalArgumentException if {@code studentReading} is null.
      */
-    public static VerificationResult evaluate(Signals signals) {
-        if (signals == null) {
-            return VerificationResult.error("No signal data provided.");
+    public synchronized VerificationResult verify(SignalReading studentReading) {
+        if (studentReading == null) {
+            throw new IllegalArgumentException("studentReading must not be null");
         }
 
-        // ── Check if BLE (mandatory signal) is present ────────────────
-        if (signals.bleScore < 0) {
-            return VerificationResult.pending();
-        }
-
-        // ── Calculate available weight total for redistribution ───────
-        double totalWeight = W_BLE;  // BLE is always available at this point
-        if (signals.ultrasoundAvailable) totalWeight += W_ULTRASOUND;
-        if (signals.audioAvailable)      totalWeight += W_AUDIO;
-        if (signals.barometerAvailable)  totalWeight += W_BAROMETER;
-
-        // Avoid division by zero (shouldn't happen — BLE weight > 0).
-        if (totalWeight == 0) {
-            return VerificationResult.error("No verification signals available.");
-        }
-
-        // ── Score each signal ─────────────────────────────────────────
-        double weightedSum = 0.0;
-        StringBuilder failReasons = new StringBuilder();
-
-        // 1. BLE RSSI
-        double bleNorm = W_BLE / totalWeight;
-        weightedSum += bleNorm * signals.bleScore;
-        if (signals.bleScore < 0.3) {
-            failReasons.append("BLE signal too weak. ");
-        }
-
-        // 2. Ultrasound
-        if (signals.ultrasoundAvailable) {
-            double usNorm = W_ULTRASOUND / totalWeight;
-            if (signals.ultrasoundDetected) {
-                weightedSum += usNorm * 1.0;
-            } else {
-                failReasons.append("Ultrasonic tone not detected. ");
-            }
-        }
-
-        // 3. Audio correlation
-        if (signals.audioAvailable) {
-            double audioNorm = W_AUDIO / totalWeight;
-            double audioScore = Math.max(0.0, Math.min(1.0, signals.audioSimilarity));
-            weightedSum += audioNorm * audioScore;
-            if (signals.audioSimilarity < 0.5) {
-                failReasons.append("Ambient audio mismatch. ");
-            }
-        }
-
-        // 4. Barometer
-        if (signals.barometerAvailable) {
-            double baroNorm = W_BAROMETER / totalWeight;
-            if (signals.barometerMatch) {
-                weightedSum += baroNorm * 1.0;
-            } else {
-                failReasons.append("Barometer mismatch: different floor detected. ");
-            }
-        }
-
-        // ── Decision ──────────────────────────────────────────────────
-        if (weightedSum >= PASS_THRESHOLD) {
-            return VerificationResult.verified(weightedSum);
-        } else {
-            String reason = failReasons.length() > 0
-                    ? failReasons.toString().trim()
-                    : "Confidence too low.";
-            return VerificationResult.unverified(weightedSum, reason);
-        }
+        VerificationResult result = DsvfAlgorithm.evaluate(studentReading);
+        history.add(result);
+        return result;
     }
 
     /**
-     * Returns the pass threshold.
-     * Exposed for unit tests and for debug/admin UI.
+     * Returns an unmodifiable view of all verification results in this
+     * session, in chronological order.
+     *
+     * @return unmodifiable list of results (never null, may be empty).
      */
-    public static double getPassThreshold() {
-        return PASS_THRESHOLD;
+    public synchronized List<VerificationResult> getSessionHistory() {
+        return Collections.unmodifiableList(new ArrayList<>(history));
     }
 
     /**
-     * Normalises a raw BLE RSSI value to a [0.0, 1.0] score.
+     * Computes the session accuracy estimate: the fraction of attempts
+     * that resulted in {@link VerificationStatus#PRESENT} or
+     * {@link VerificationStatus#FLAGGED} (i.e. attendance was marked).
      *
-     * The mapping:
-     *   -50 dBm or stronger → 1.0 (excellent — within ~1 metre)
-     *   -90 dBm or weaker   → 0.0 (out of practical BLE range)
-     *   Linear interpolation between -90 and -50.
+     * <p>Useful for the professor's dashboard: "32/35 students verified
+     * (91.4%)".</p>
      *
-     * This is a utility for the presenter: convert the raw RSSI from
-     * {@link com.example.digitalsphere.data.ble.BleScanner} before
-     * setting it on {@link Signals#bleScore}.
-     *
-     * @param rssi raw RSSI in dBm (always negative).
-     * @return normalised score in [0.0, 1.0].
+     * @return accuracy in [0.0, 1.0], or 0.0 if no attempts have been made.
      */
-    public static double normaliseRssi(int rssi) {
-        final int STRONG = -50;
-        final int WEAK   = -90;
-        if (rssi >= STRONG) return 1.0;
-        if (rssi <= WEAK)   return 0.0;
-        return (double) (rssi - WEAK) / (STRONG - WEAK);
+    public synchronized float getSessionAccuracyEstimate() {
+        if (history.isEmpty()) return 0f;
+
+        int marked = 0;
+        for (VerificationResult r : history) {
+            if (r.isPresent()) {
+                marked++;
+            }
+        }
+        return (float) marked / history.size();
+    }
+
+    /**
+     * Returns the number of verification attempts in this session.
+     */
+    public synchronized int getAttemptCount() {
+        return history.size();
+    }
+
+    // ── Reference data getters (for debug / UI) ─────────────────────────
+
+    /** Professor's barometric pressure, or {@link Float#NaN} if unavailable. */
+    public float getProfessorPressureHPa() {
+        return professorPressureHPa;
+    }
+
+    /** The expected 4-bit OOK token, or −1 if ultrasound is disabled. */
+    public int getExpectedUltrasoundToken() {
+        return expectedUltrasoundToken;
+    }
+
+    /**
+     * Defensive copy of the professor's ambient audio hash.
+     * @return float[8] copy, or {@code null} if audio is disabled.
+     */
+    public float[] getProfessorAmbientHash() {
+        return copyOrNull(professorAmbientHash);
+    }
+
+    // ── Internal ────────────────────────────────────────────────────────
+
+    private static float[] copyOrNull(float[] src) {
+        if (src == null) return null;
+        float[] copy = new float[src.length];
+        System.arraycopy(src, 0, copy, 0, src.length);
+        return copy;
     }
 }

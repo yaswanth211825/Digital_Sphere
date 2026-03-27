@@ -46,4 +46,25 @@ public class FakeStudentView implements IStudentView {
 
     @Override public void setScanEnabled(boolean enabled)         { scanEnabled = enabled; }
     @Override public void setSignalPanelVisible(boolean visible)  { signalPanelVisible = visible; }
+
+    // ── Sensor capabilities + verification outcome (new in IStudentView) ─
+
+    public boolean lastHasBarometer;
+    public boolean lastHasAudio;
+    public boolean lastHasUltrasound;
+    public String  lastOutcomeStatus;
+    public float   lastFusionScore;
+    public String  lastOutcomeReason;
+
+    @Override public void showSensorCapabilities(boolean hasBaro, boolean hasAudio, boolean hasUltrasound) {
+        lastHasBarometer  = hasBaro;
+        lastHasAudio      = hasAudio;
+        lastHasUltrasound = hasUltrasound;
+    }
+
+    @Override public void showVerificationOutcome(String status, float fusionScore, String reason) {
+        lastOutcomeStatus = status;
+        lastFusionScore   = fusionScore;
+        lastOutcomeReason = reason;
+    }
 }

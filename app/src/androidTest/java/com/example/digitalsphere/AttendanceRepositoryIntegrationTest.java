@@ -41,6 +41,9 @@ import static org.junit.Assert.*;
  *
  * US-IREP-06  As a professor running two sessions, each session's
  *             attendance list is completely independent.
+ *
+ * US-IREP-07  As a professor, clearing a finished session removes only
+ *             that session's live rows so a restarted class starts empty.
  */
 @RunWith(AndroidJUnit4.class)
 public class AttendanceRepositoryIntegrationTest {
@@ -200,5 +203,27 @@ public class AttendanceRepositoryIntegrationTest {
         // Same student attending two separate classes
         assertTrue(repo.markPresent("Yash", "dev_001", SESSION_CS));
         assertTrue(repo.markPresent("Yash", "dev_001", SESSION_MATH));
+    }
+
+    // ── US-IREP-07  Clear finished session ────────────────────────────────
+
+    @Test
+    public void clearSession_removesOnlyTargetSessionRows() {
+        repo.markPresent("Yash", "dev_001", SESSION_CS);
+        repo.markPresent("Priya", "dev_002", SESSION_MATH);
+
+        repo.clearSession(SESSION_CS);
+
+        assertEquals(0, repo.getAttendanceCount(SESSION_CS));
+        assertEquals(1, repo.getAttendanceCount(SESSION_MATH));
+        assertTrue(repo.getAttendance(SESSION_MATH).get(0).contains("Priya"));
+    }
+
+    @Test
+    public void clearSession_unknownSession_keepsRepositoryStable() {
+        repo.clearSession("unknown_session");
+
+        assertEquals(0, repo.getAttendanceCount("unknown_session"));
+        assertTrue(repo.getAttendance("unknown_session").isEmpty());
     }
 }

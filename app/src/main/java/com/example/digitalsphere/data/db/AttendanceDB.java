@@ -101,4 +101,9 @@ public class AttendanceDB extends SQLiteOpenHelper {
         c.close();
         return count;
     }
+
+    void deleteBySession(String sessionId) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.delete("attendance", "session_id=?", new String[]{sessionId});
+    }
 }

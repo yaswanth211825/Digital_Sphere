@@ -33,4 +33,10 @@ public interface IAttendanceRepository {
      * Returns the count of students marked present for a session.
      */
     int getAttendanceCount(String sessionId);
+
+    /**
+     * Clears the live attendance rows for a session so a restarted session
+     * begins empty instead of inheriting names from an earlier run.
+     */
+    void clearSession(String sessionId);
 }

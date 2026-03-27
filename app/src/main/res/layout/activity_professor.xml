@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="24dp"
+    android:fillViewport="true"
     android:background="#F5F5F5">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp">
 
     <TextView
         android:text="👨‍🏫 Professor Panel"
@@ -20,7 +25,7 @@
         android:text="Session: Inactive"
         android:textSize="14sp"
         android:textColor="#888888"
-        android:layout_marginBottom="20dp"
+        android:layout_marginBottom="12dp"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"/>
 
@@ -71,9 +76,127 @@
         android:text="Tip: 5 minutes is the recommended session duration"
         android:textSize="12sp"
         android:textColor="#AAAAAA"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="12dp"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"/>
+
+    <!-- Sensor Warning Banner — shown when professor device is missing critical sensors -->
+    <LinearLayout
+        android:id="@+id/banner_sensor_warning"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#FFF3E0"
+        android:padding="10dp"
+        android:layout_marginBottom="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:text="⚠️"
+            android:textSize="18sp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"/>
+
+        <TextView
+            android:id="@+id/tv_sensor_warning_text"
+            android:text=""
+            android:textSize="12sp"
+            android:textColor="#E65100"
+            android:lineSpacingExtra="2dp"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+
+    </LinearLayout>
+
+    <!-- Sensor Status Card -->
+    <LinearLayout
+        android:id="@+id/card_sensor_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@android:color/white"
+        android:padding="12dp"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:text="Sensor Status"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="#1A1A2E"
+            android:layout_marginBottom="6dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <!-- Barometer row -->
+        <TextView
+            android:id="@+id/tv_baro_status"
+            android:text="🌡️ Barometer: Checking..."
+            android:textSize="13sp"
+            android:textColor="#888888"
+            android:layout_marginBottom="4dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <!-- Pressure value row -->
+        <TextView
+            android:id="@+id/tv_pressure_value"
+            android:text="📍 Current pressure: —"
+            android:textSize="13sp"
+            android:textColor="#888888"
+            android:layout_marginBottom="4dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <!-- Ultrasound row -->
+        <TextView
+            android:id="@+id/tv_ultrasound_status"
+            android:text="🔊 Ultrasound: Checking..."
+            android:textSize="13sp"
+            android:textColor="#888888"
+            android:layout_marginBottom="4dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <!-- Audio correlation row -->
+        <TextView
+            android:id="@+id/tv_audio_status"
+            android:text="🎵 Audio: Checking..."
+            android:textSize="13sp"
+            android:textColor="#888888"
+            android:layout_marginBottom="4dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <!-- BLE row -->
+        <TextView
+            android:id="@+id/tv_ble_status"
+            android:text="📡 BLE: Idle"
+            android:textSize="13sp"
+            android:textColor="#888888"
+            android:layout_marginBottom="6dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <!-- Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#E0E0E0"
+            android:layout_marginBottom="6dp"/>
+
+        <!-- Active signals summary -->
+        <TextView
+            android:id="@+id/tv_signals_summary"
+            android:text="Signals: checking..."
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="#888888"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+    </LinearLayout>
 
     <!-- Action buttons -->
     <LinearLayout
@@ -131,14 +254,15 @@
             android:layout_height="wrap_content"/>
     </LinearLayout>
 
+    <!-- Fixed height ListView — inside ScrollView, layout_weight doesn't work -->
     <ListView
         android:id="@+id/lv_attendance"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="220dp"
         android:background="@android:color/white"
         android:dividerHeight="1dp"
-        android:padding="4dp"/>
+        android:padding="4dp"
+        android:nestedScrollingEnabled="true"/>
 
     <Button
         android:id="@+id/btn_export"
@@ -150,4 +274,28 @@
         android:layout_marginTop="12dp"
         android:backgroundTint="#3498DB"/>
 
+    <!-- DEBUG: Temporary ultrasound test button — REMOVE after hardware verification -->
+    <Button
+        android:id="@+id/btn_test_ultrasound"
+        android:text="🔊 Test Ultrasound"
+        android:textSize="13sp"
+        android:textColor="#FFFFFF"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="8dp"
+        android:backgroundTint="#9B59B6"/>
+
+    <!-- Ultrasound debug status — shows real-time emission feedback -->
+    <TextView
+        android:id="@+id/tv_ultrasound_debug"
+        android:text=""
+        android:textSize="11sp"
+        android:textColor="#9B59B6"
+        android:layout_marginTop="4dp"
+        android:gravity="center"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
 </LinearLayout>
+</ScrollView>

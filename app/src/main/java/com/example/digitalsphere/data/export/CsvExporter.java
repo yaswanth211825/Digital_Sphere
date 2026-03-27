@@ -8,7 +8,10 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Exports attendance records to a CSV file.
@@ -28,6 +31,10 @@ import java.util.List;
  */
 public class CsvExporter {
 
+    private static final String ARCHIVE_DIR_NAME = "attendance_archives";
+    private static final SimpleDateFormat ARCHIVE_TS_FMT =
+            new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US);
+
     private CsvExporter() {}
 
     /**
@@ -46,6 +53,29 @@ public class CsvExporter {
                 showToast(context, "Export failed: " + e.getMessage());
             }
         }).start();
+    }
+
+    /**
+     * Saves a session snapshot into app-internal storage. The file name includes
+     * a timestamp so consecutive runs of the same session ID do not overwrite
+     * each other.
+     */
+    public static File archiveToInternalStorage(Context context, List<String> records, String sessionId)
+            throws IOException {
+        File dir = getInternalArchiveDirectory(context);
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw new IOException("Cannot create internal archive directory.");
+        }
+
+        File file = new File(dir,
+                "attendance_" + sanitizeSessionId(sessionId) + "_"
+                        + ARCHIVE_TS_FMT.format(new Date()) + ".csv");
+        writeRecords(file, records);
+        return file;
+    }
+
+    public static File getInternalArchiveDirectory(Context context) {
+        return new File(context.getFilesDir(), ARCHIVE_DIR_NAME);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────
@@ -102,5 +132,10 @@ public class CsvExporter {
         new Handler(Looper.getMainLooper()).post(() ->
                 Toast.makeText(context.getApplicationContext(),
                         message, Toast.LENGTH_LONG).show());
+    }
+
+    private static String sanitizeSessionId(String sessionId) {
+        if (sessionId == null || sessionId.trim().isEmpty()) return "session";
+        return sessionId.replaceAll("[^a-zA-Z0-9_-]", "_");
     }
 }

@@ -176,6 +176,17 @@ public class ProfessorPresenterTest {
         assertTrue(view.errors.isEmpty());
     }
 
+    @Test
+    public void startSession_reusedName_clearsPreviousLiveAttendance() {
+        repo.markPresent("Yash Sharma", "dev_001", "cs101");
+
+        presenter.startSession("CS101", "5");
+
+        assertEquals(0, repo.getAttendanceCount("cs101"));
+        assertTrue(view.lastAttendanceList.isEmpty());
+        assertEquals(0, view.lastAttendanceCount);
+    }
+
     // ── US-PP-04  Student detected → attendance updated ────────────────────
 
     @Test

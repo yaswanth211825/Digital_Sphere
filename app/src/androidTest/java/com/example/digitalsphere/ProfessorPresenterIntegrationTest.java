@@ -4,9 +4,15 @@ import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.example.digitalsphere.data.db.AttendanceRepository;
+import com.example.digitalsphere.data.export.CsvExporter;
 import com.example.digitalsphere.helper.FakeBleManager;
 import com.example.digitalsphere.helper.FakeProfessorView;
 import com.example.digitalsphere.presenter.ProfessorPresenter;
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.List;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -35,11 +41,10 @@ import static org.junit.Assert.*;
  *            are visible in the attendance list immediately after detection.
  *
  * US-IPP-04  As a professor, stopping the session persists all records in
- *            real SQLite — a later refreshAttendance() still shows them.
+ *            an internal CSV archive so attendance is preserved after class.
  *
- * US-IPP-05  As a professor, two consecutive sessions (same name) share
- *            the same session ID — any student already marked in the first
- *            run is still counted when the session is restarted.
+ * US-IPP-05  As a professor, restarting the same session name starts with
+ *            a clean live attendance list instead of reusing old names.
  *
  * US-IPP-06  As a professor, the attendance count shown in the view
  *            matches the real number of records in the SQLite table.
@@ -57,13 +62,23 @@ public class ProfessorPresenterIntegrationTest {
     public void setUp() {
         ctx = ApplicationProvider.getApplicationContext();
         ctx.deleteDatabase("attendance.db");
+        deleteInternalArchives();
 
         view = new FakeProfessorView();
         ble  = new FakeBleManager();
         repo = new AttendanceRepository(ctx);
 
-        presenter = new ProfessorPresenter(repo, ble) {
+        presenter = new ProfessorPresenter(ctx, repo, ble) {
             @Override protected void startTimer(int minutes) { /* no-op: avoid CountDownTimer in tests */ }
+
+            @Override
+            protected void archiveSessionSnapshot(List<String> records, String sessionId) {
+                try {
+                    CsvExporter.archiveToInternalStorage(ctx, records, sessionId);
+                } catch (IOException e) {
+                    fail("archiveSessionSnapshot failed: " + e.getMessage());
+                }
+            }
         };
         presenter.attach(view);
     }
@@ -72,6 +87,7 @@ public class ProfessorPresenterIntegrationTest {
     public void tearDown() {
         presenter.detach();
         ctx.deleteDatabase("attendance.db");
+        deleteInternalArchives();
     }
 
     // ── US-IPP-01  BLE callback → real DB write → view update ────────────
@@ -153,6 +169,21 @@ public class ProfessorPresenterIntegrationTest {
     }
 
     @Test
+    public void stopSession_createsInternalArchive() throws Exception {
+        presenter.startSession("CS101", "5");
+        ble.simulateStudentDetected("Yash Sharma");
+        presenter.stopSession();
+
+        File[] files = CsvExporter.getInternalArchiveDirectory(ctx)
+                .listFiles((dir, name) -> name.startsWith("attendance_cs101_"));
+
+        assertNotNull(files);
+        assertEquals(1, files.length);
+        String contents = new String(Files.readAllBytes(files[0].toPath()), StandardCharsets.UTF_8);
+        assertTrue(contents.contains("Yash Sharma"));
+    }
+
+    @Test
     public void stopSession_viewRefreshesWithPersistedData() {
         presenter.startSession("CS101", "5");
         ble.simulateStudentDetected("Yash Sharma");
@@ -165,7 +196,7 @@ public class ProfessorPresenterIntegrationTest {
     // ── US-IPP-05  Session restart — same session ID accumulates ──────────
 
     @Test
-    public void sessionRestarted_previousRecordsStillCounted() {
+    public void sessionRestarted_startsWithFreshAttendance() {
         // US-IPP-05
         presenter.startSession("CS101", "5");
         ble.simulateStudentDetected("Yash Sharma");
@@ -175,8 +206,8 @@ public class ProfessorPresenterIntegrationTest {
         presenter.startSession("CS101", "5");
         ble.simulateStudentDetected("Priya Patel");
 
-        // Both should be in DB under "cs101"
-        assertEquals(2, repo.getAttendanceCount("cs101"));
+        assertEquals(1, repo.getAttendanceCount("cs101"));
+        assertTrue(repo.getAttendance("cs101").get(0).contains("Priya Patel"));
     }
 
     // ── US-IPP-06  View count matches DB count ────────────────────────────
@@ -203,5 +234,18 @@ public class ProfessorPresenterIntegrationTest {
         ble.simulateStudentDetected("Late Student");
 
         assertEquals(0, repo.getAttendanceCount("cs101"));
+    }
+
+    private void deleteInternalArchives() {
+        File dir = CsvExporter.getInternalArchiveDirectory(ctx);
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                file.delete();
+            }
+        }
+        if (dir.exists()) {
+            dir.delete();
+        }
     }
 }

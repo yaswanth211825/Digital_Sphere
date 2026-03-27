@@ -2,14 +2,18 @@ package com.example.digitalsphere.presenter;
 
 import android.content.Context;
 import android.os.CountDownTimer;
+import android.util.Log;
 import com.example.digitalsphere.contract.IProfessorView;
-import com.example.digitalsphere.data.ble.IBleManager;
 import com.example.digitalsphere.data.ble.BleManager;
+import com.example.digitalsphere.data.ble.IBleManager;
 import com.example.digitalsphere.data.db.AttendanceRepository;
 import com.example.digitalsphere.data.export.CsvExporter;
 import com.example.digitalsphere.domain.IAttendanceRepository;
 import com.example.digitalsphere.domain.SessionManager;
 import com.example.digitalsphere.domain.model.ValidationResult;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -22,6 +26,7 @@ import java.util.List;
 public class ProfessorPresenter {
 
     private static final int DEFAULT_DURATION_MINUTES = 5;
+    private static final String TAG = "ProfessorPresenter";
 
     // Set by production constructor; null when using the test constructor.
     private final Context appContext;
@@ -35,6 +40,7 @@ public class ProfessorPresenter {
 
     private String         sessionId;
     private boolean        sessionActive  = false;
+    private boolean        sessionClosed  = true;
     private CountDownTimer countDownTimer;
 
     // ── Constructors ───────────────────────────────────────────────────────
@@ -54,6 +60,13 @@ public class ProfessorPresenter {
         this.bleManager  = bleManager;
     }
 
+    /** Test/integration constructor — real Context plus injected dependencies. */
+    public ProfessorPresenter(Context context, IAttendanceRepository repo, IBleManager bleManager) {
+        this.appContext = context.getApplicationContext();
+        this.repo = repo;
+        this.bleManager = bleManager;
+    }
+
     // ── Lifecycle ──────────────────────────────────────────────────────────
 
     public void attach(IProfessorView view) {
@@ -69,7 +82,18 @@ public class ProfessorPresenter {
 
     // ── Session control ────────────────────────────────────────────────────
 
+    // SPRINT-1-UI: Overload for backward compatibility (tests call 2-arg version)
     public void startSession(String rawName, String rawDuration) {
+        startSession(rawName, rawDuration, 0.0f, -1);
+    }
+
+    // Backward compat — 3-arg version (no token)
+    public void startSession(String rawName, String rawDuration, float pressureHPa) {
+        startSession(rawName, rawDuration, pressureHPa, -1);
+    }
+
+    // Main entry point — accepts barometric pressure AND ultrasound token
+    public void startSession(String rawName, String rawDuration, float pressureHPa, int sessionToken) {
         if (view == null) return;
 
         ValidationResult nameResult = sessionManager.validateSessionName(rawName);
@@ -88,8 +112,10 @@ public class ProfessorPresenter {
             return;
         }
 
-        sessionId     = sessionManager.createSessionId(rawName);
+        sessionId = sessionManager.createSessionId(rawName);
+        resetLiveSession(sessionId);
         sessionActive = true;
+        sessionClosed = false;
 
         view.showSessionId(sessionId);
         view.setStartEnabled(false);
@@ -97,9 +123,9 @@ public class ProfessorPresenter {
 
         startTimer(durationMinutes);
 
-        // MODIFIED — pass 0.0f pressure and 0 token for now; the verification
-        // layer will supply real values once BarometerReader is wired in.
-        bleManager.startProfessorMode(0.0f, 0, new IBleManager.ProfessorBleListener() {
+        // SPRINT-1-UI: Pass real barometric pressure + ultrasound token to BLE payload.
+        // pressureHPa 0.0f = "barometer unavailable"; sessionToken -1 = "ultrasound inactive".
+        bleManager.startProfessorMode(pressureHPa, sessionToken, new IBleManager.ProfessorBleListener() {
             @Override public void onBeaconStarted() {
                 if (view != null) {
                     view.setLoading(false);
@@ -117,17 +143,27 @@ public class ProfessorPresenter {
                     view.setStartEnabled(true);
                 }
                 sessionActive = false;
+                sessionClosed = true;
             }
         });
     }
 
     public void stopSession() {
+        if (sessionClosed) return;
+        sessionClosed = true;
         sessionActive = false;
+        String archivedSessionId = sessionId;
+        List<String> archivedRecords = (repo == null || archivedSessionId == null)
+                ? Collections.emptyList()
+                : repo.getAttendance(archivedSessionId);
         if (countDownTimer != null) {
             countDownTimer.cancel();
             countDownTimer = null;
         }
-        bleManager.stopProfessorMode();
+        if (bleManager != null) {
+            bleManager.stopProfessorMode();
+        }
+        archiveSessionSnapshot(archivedRecords, archivedSessionId);
         if (view != null) {
             view.setStartEnabled(true);
             view.setStopEnabled(false);
@@ -187,4 +223,30 @@ public class ProfessorPresenter {
 
     public boolean isSessionActive() { return sessionActive; }
     public String  getSessionId()    { return sessionId; }
+
+    protected void archiveSessionSnapshot(List<String> records, String sessionId) {
+        if (appContext == null || sessionId == null) return;
+
+        List<String> snapshot = (records == null)
+                ? Collections.emptyList()
+                : new ArrayList<>(records);
+
+        new Thread(() -> {
+            try {
+                CsvExporter.archiveToInternalStorage(appContext, snapshot, sessionId);
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to archive session " + sessionId, e);
+            }
+        }).start();
+    }
+
+    private void resetLiveSession(String sessionId) {
+        if (repo != null && sessionId != null) {
+            repo.clearSession(sessionId);
+        }
+        if (view != null) {
+            view.updateAttendanceList(Collections.emptyList());
+            view.updateAttendanceCount(0);
+        }
+    }
 }

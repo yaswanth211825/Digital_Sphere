@@ -64,15 +64,21 @@ public class BleManager implements IBleManager {
             @Override public void onResult(int rssi, boolean inRange) {
                 post(() -> listener.onSignalUpdate(rssi, inRange));
             }
+            @Override public void onProfessorMetadata(float pressureHPa, int sessionToken) {
+                post(() -> listener.onProfessorMetadata(pressureHPa, sessionToken));
+            }
             @Override public void onError(String reason) {
                 post(() -> listener.onError(reason));
             }
         });
         activeStudentScanner.start();
+    }
 
+    @Override
+    public void startStudentBeacon(String studentName, BeaconListener listener) {
         studentBeacon.start(studentName, new StudentBeacon.Listener() {
             @Override public void onStarted() {
-                post(listener::onBeaconStarted);
+                post(listener::onStarted);
             }
             @Override public void onFailed(String reason) {
                 post(() -> listener.onError(reason));

@@ -61,7 +61,7 @@ class BleAdvertiser {
      * @param pressureHPa current barometric pressure in hPa (e.g. 1013.25).
      *                    Pass 0.0f if barometer is unavailable — the student
      *                    side will treat 0 as "pressure not provided".
-     * @param sessionToken 16-bit token for the ultrasound layer. Pass 0 if
+     * @param sessionToken 4-bit token for the ultrasound layer. Pass -1 if
      *                     ultrasound is not yet active.
      * @param listener     lifecycle callbacks.
      */
@@ -135,12 +135,12 @@ class BleAdvertiser {
     static byte[] packPayload(float pressureHPa, int token) {
         // Clamp to unsigned 16-bit range: 0 .. 65535 → 0.0 .. 6553.5 hPa
         int pressureEncoded = Math.max(0, Math.min(65535, (int) (pressureHPa * 10)));
-        int tokenClamped    = token & 0xFFFF;
+        int tokenEncoded = token >= 0 ? ((token & 0xFFFF) + 1) : 0;
 
         return ByteBuffer.allocate(HEADER_SIZE)
                 .order(ByteOrder.BIG_ENDIAN)
                 .putShort((short) pressureEncoded)
-                .putShort((short) tokenClamped)
+                .putShort((short) tokenEncoded)
                 .array();
     }
 
@@ -168,14 +168,15 @@ class BleAdvertiser {
      * Extracts the session token from a manufacturer data payload.
      *
      * @param data raw manufacturer data bytes (at least 4 bytes).
-     * @return unsigned 16-bit token (0–65535), or 0 if data is null/short.
+     * @return decoded 4-bit token, or -1 if ultrasound is inactive / unavailable.
      */
     static int unpackToken(byte[] data) {
-        if (data == null || data.length < OFFSET_TOKEN + 2) return 0;
+        if (data == null || data.length < OFFSET_TOKEN + 2) return -1;
 
-        return ByteBuffer.wrap(data, OFFSET_TOKEN, 2)
+        int raw = ByteBuffer.wrap(data, OFFSET_TOKEN, 2)
                 .order(ByteOrder.BIG_ENDIAN)
                 .getShort() & 0xFFFF;
+        return raw == 0 ? -1 : raw - 1;
     }
 
     // ── Unchanged ─────────────────────────────────────────────────────────

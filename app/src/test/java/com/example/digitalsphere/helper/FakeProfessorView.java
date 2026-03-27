@@ -48,4 +48,12 @@ public class FakeProfessorView implements IProfessorView {
         lastError = message;
         errors.add(message);
     }
+
+    // ── Sensor warning (new in IProfessorView) ──────────────────────────
+
+    public String lastSensorWarning;
+
+    @Override public void showSensorWarning(String message) {
+        lastSensorWarning = message;
+    }
 }

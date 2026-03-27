@@ -31,4 +31,7 @@ public class FakeProfessorView implements IProfessorView {
     @Override public void setStartEnabled(boolean b)            { startEnabled = b; }
     @Override public void setStopEnabled(boolean b)             { stopEnabled = b; }
     @Override public void showError(String m)                   { lastError = m; errors.add(m); }
+
+    public String lastSensorWarning;
+    @Override public void showSensorWarning(String message)    { lastSensorWarning = message; }
 }

@@ -36,6 +36,20 @@ public interface IProfessorView {
     /** Update the live attendance counter badge (FR-15). */
     void updateAttendanceCount(int count);
 
+    // ── Sensor warnings ────────────────────────────────────────────────
+
+    /**
+     * Displays a persistent warning banner when one or more professor-side
+     * sensors are unavailable. This is important because a missing sensor
+     * on the professor's device degrades verification for ALL students.
+     *
+     * @param message the warning text (e.g. "Floor detection disabled —
+     *                this device has no barometer. Verification will
+     *                rely on ultrasound, audio, and BLE only.").
+     *                Pass {@code null} or empty to hide the banner.
+     */
+    void showSensorWarning(String message);
+
     // ── UI state helpers ──────────────────────────────────────────────────
 
     /** Show or hide the progress spinner. */

@@ -16,6 +16,7 @@ class BleScanner {
 
     interface Listener {
         void onResult(int rssi, boolean inRange);
+        void onProfessorMetadata(float pressureHPa, int sessionToken);
         void onError(String reason);
     }
 
@@ -49,6 +50,14 @@ class BleScanner {
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
                 int rssi = result.getRssi();
+                byte[] payload = null;
+                if (result.getScanRecord() != null) {
+                    payload = result.getScanRecord()
+                            .getManufacturerSpecificData(BleAdvertiser.COMPANY_ID);
+                }
+                listener.onProfessorMetadata(
+                        BleAdvertiser.unpackPressure(payload),
+                        BleAdvertiser.unpackToken(payload));
                 listener.onResult(rssi, rssi >= RSSI_THRESHOLD);
             }
             @Override

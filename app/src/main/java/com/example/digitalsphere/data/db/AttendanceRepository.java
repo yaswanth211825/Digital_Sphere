@@ -37,4 +37,9 @@ public class AttendanceRepository implements IAttendanceRepository {
     public int getAttendanceCount(String sessionId) {
         return db.countBySession(sessionId);
     }
+
+    @Override
+    public void clearSession(String sessionId) {
+        db.deleteBySession(sessionId);
+    }
 }

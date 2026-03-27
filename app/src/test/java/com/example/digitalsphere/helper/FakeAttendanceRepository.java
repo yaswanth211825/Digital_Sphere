@@ -46,6 +46,12 @@ public class FakeAttendanceRepository implements IAttendanceRepository {
         return getAttendance(sessionId).size();
     }
 
+    @Override
+    public void clearSession(String sessionId) {
+        marked.remove(sessionId);
+        records.remove(sessionId);
+    }
+
     /** Test helper: total number of unique records across all sessions. */
     public int totalRecords() {
         return records.values().stream().mapToInt(List::size).sum();

@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- Ultrasound detection: student mic captures professor's 18.5 kHz OOK signal -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- Required on API 26-30 for BLE scan; also used for proximity detection -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

@@ -1,39 +1,60 @@
 package com.example.digitalsphere.domain.verification;
 
 /**
- * Possible outcomes of a multi-signal attendance verification.
+ * Possible outcomes of the DSVF (Dynamic Signal-Validity Fusion) algorithm.
  *
- * The verification engine evaluates BLE RSSI, barometer delta, ultrasound
- * detection, and ambient audio correlation — then maps the aggregate
- * result onto one of these four states.
+ * <p>The verification engine evaluates BLE RSSI, barometer delta, ultrasound
+ * detection, and ambient audio correlation through a six-stage pipeline,
+ * then maps the aggregate result onto one of these six states.</p>
  *
- * This is a domain-level enum: pure Java, no Android imports.
+ * <p>States are ordered by severity — {@link #PRESENT} is the only state
+ * that marks attendance automatically. {@link #FLAGGED} marks attendance
+ * but alerts the professor for manual review.</p>
+ *
+ * <p>Pure Java — no Android imports.</p>
  */
 public enum VerificationStatus {
 
     /**
-     * All available signals confirm the student is physically present
-     * in the same room as the professor. Attendance can be marked.
+     * All signals confirm physical presence. Fusion score ≥ 0.75 with
+     * no inter-signal conflict detected. Attendance is marked automatically.
      */
-    VERIFIED,
+    PRESENT,
 
     /**
-     * One or more critical signals indicate the student is NOT co-located
-     * with the professor. Attendance should be denied or flagged.
+     * Presence is likely but not certain. Fusion score in [0.55, 0.75) OR
+     * one signal is marginal. Attendance is marked but the professor is
+     * notified for manual review.
      */
-    UNVERIFIED,
+    FLAGGED,
 
     /**
-     * Verification is still in progress — not all signals have been
-     * collected yet. The UI should show a "checking…" state.
+     * Two or more high-trust signals (SVS &gt; 0.70) contradict each other
+     * by more than 0.40 in presence score. This indicates a potential
+     * spoofing attempt or severe sensor malfunction. Attendance is NOT
+     * marked; the professor is alerted.
      */
-    PENDING,
+    CONFLICT,
 
     /**
-     * A sensor or system failure prevented verification from completing.
-     * This is distinct from UNVERIFIED: the student may well be present,
-     * but we cannot confirm it. The professor should fall back to
-     * manual verification.
+     * Hard gate failure: barometric pressure difference ≥ 0.30 hPa,
+     * indicating the student is on a different floor (≥ 3 m vertical
+     * separation). Short-circuits before fusion scoring.
      */
-    ERROR
+    REJECTED_FLOOR,
+
+    /**
+     * Hard gate failure: ultrasound token mismatch or confidence below
+     * minimum threshold. The student's phone did not detect the professor's
+     * inaudible OOK signal, proving they are NOT in the same room.
+     * This gate is mandatory — ultrasound cannot be skipped.
+     */
+    REJECTED_ROOM,
+
+    /**
+     * Fusion score fell below the minimum threshold (0.55). No hard gate
+     * failed, but the aggregate evidence is insufficient to confirm
+     * presence. Attendance is NOT marked.
+     */
+    REJECTED_SCORE
 }
