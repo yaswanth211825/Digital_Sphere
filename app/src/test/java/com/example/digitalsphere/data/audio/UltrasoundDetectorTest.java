@@ -197,6 +197,37 @@ public class UltrasoundDetectorTest {
     }
 
     @Test
+    public void normaliseConfidence_detectionThresholdMapsAboveRoomFloor() {
+        float confidence = UltrasoundDetector.normaliseConfidence(
+                UltrasoundDetector.DETECTION_THRESHOLD);
+
+        assertTrue("Threshold detection should remain usable for DSVF, was: " + confidence,
+                confidence >= 0.30f);
+        assertTrue("Threshold detection should stay below saturated confidence, was: " + confidence,
+                confidence < 0.50f);
+    }
+
+    @Test
+    public void normaliseConfidence_realmeLikeMagnitudeDoesNotCollapseToZero() {
+        // Regression for the RMX3085 trace: the detector decoded the correct
+        // token with a magnitude around 1140, but the old linear scaler mapped
+        // it to 0.19 and the presenter dropped ultrasound entirely.
+        float confidence = UltrasoundDetector.normaliseConfidence(1140.0);
+
+        assertTrue("Real-device magnitude should stay above the room-lock floor, was: " + confidence,
+                confidence >= 0.30f);
+    }
+
+    @Test
+    public void normaliseConfidence_monotonicWithMagnitude() {
+        float low = UltrasoundDetector.normaliseConfidence(UltrasoundDetector.DETECTION_THRESHOLD);
+        float high = UltrasoundDetector.normaliseConfidence(UltrasoundDetector.DETECTION_THRESHOLD * 4.0);
+
+        assertTrue("Confidence should rise with stronger detections. low=" + low + ", high=" + high,
+                high > low);
+    }
+
+    @Test
     public void frameSize_isPowerOfTwo() {
         // While Goertzel doesn't require power-of-2 (unlike FFT),
         // power-of-2 frame sizes are cache-friendly and standard

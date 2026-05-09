@@ -2,6 +2,7 @@ package com.example.digitalsphere.data.ble;
 
 import android.os.Handler;
 import android.os.Looper;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 
 /**
  * Concrete BLE facade. Wraps BleAdvertiser, BleScanner, StudentBeacon,
@@ -26,8 +27,12 @@ public class BleManager implements IBleManager {
 
     // MODIFIED — passes pressure + token through to BleAdvertiser
     @Override
-    public void startProfessorMode(float pressureHPa, int sessionToken, float[] ambientHash, ProfessorBleListener listener) {
-        professorBeacon.start(pressureHPa, sessionToken, ambientHash, new BleAdvertiser.Listener() {
+    public void startProfessorMode(float pressureHPa,
+                                   int sessionToken,
+                                   float[] ambientHash,
+                                   UltrasoundSessionConfig ultrasoundConfig,
+                                   ProfessorBleListener listener) {
+        professorBeacon.start(pressureHPa, sessionToken, ambientHash, ultrasoundConfig, new BleAdvertiser.Listener() {
             @Override public void onStarted() {
                 post(listener::onBeaconStarted);
             }
@@ -56,6 +61,14 @@ public class BleManager implements IBleManager {
         }
     }
 
+    @Override
+    public void updateProfessorModeData(float pressureHPa,
+                                        int sessionToken,
+                                        float[] ambientHash,
+                                        UltrasoundSessionConfig ultrasoundConfig) {
+        professorBeacon.updatePayload(pressureHPa, sessionToken, ambientHash, ultrasoundConfig);
+    }
+
     // ── Student mode ──────────────────────────────────────────────────────
 
     @Override
@@ -64,8 +77,11 @@ public class BleManager implements IBleManager {
             @Override public void onResult(int rssi, boolean inRange) {
                 post(() -> listener.onSignalUpdate(rssi, inRange));
             }
-            @Override public void onProfessorMetadata(float pressureHPa, int sessionToken, float[] ambientHash) {
-                post(() -> listener.onProfessorMetadata(pressureHPa, sessionToken, ambientHash));
+            @Override public void onProfessorMetadata(float pressureHPa,
+                                                      int sessionToken,
+                                                      float[] ambientHash,
+                                                      UltrasoundSessionConfig ultrasoundConfig) {
+                post(() -> listener.onProfessorMetadata(pressureHPa, sessionToken, ambientHash, ultrasoundConfig));
             }
             @Override public void onError(String reason) {
                 post(() -> listener.onError(reason));

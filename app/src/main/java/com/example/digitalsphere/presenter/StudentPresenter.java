@@ -2,6 +2,7 @@ package com.example.digitalsphere.presenter;
 
 import android.content.Context;
 import com.example.digitalsphere.contract.IStudentView;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 import com.example.digitalsphere.data.ble.BleManager;
 import com.example.digitalsphere.data.ble.IBleManager;
 import com.example.digitalsphere.data.db.AttendanceRepository;
@@ -10,6 +11,8 @@ import com.example.digitalsphere.domain.SessionManager;
 import com.example.digitalsphere.domain.model.ValidationResult;
 import com.example.digitalsphere.domain.verification.SignalReading; // NEW
 import com.example.digitalsphere.domain.verification.VerificationEngine; // NEW
+import com.example.digitalsphere.data.audio.AudioCorrelator;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 import com.example.digitalsphere.domain.verification.VerificationResult; // NEW
 
 /**
@@ -21,6 +24,7 @@ import com.example.digitalsphere.domain.verification.VerificationResult; // NEW
 public class StudentPresenter {
 
     private static final int TOTAL_STEPS = 4; // NEW
+    static final float ULTRASOUND_RELIABLE_CONFIDENCE = 0.30f;
 
     // NEW: Student-side sensor abstractions keep Android sensor plumbing out of the presenter.
     public interface BarometerSignal {
@@ -39,7 +43,10 @@ public class StudentPresenter {
             void onResult(UltrasoundSnapshot snapshot);
         }
 
-        void detect(String sessionId, int expectedToken, Callback callback);
+        void detect(String sessionId,
+                    int expectedToken,
+                    UltrasoundSessionConfig ultrasoundConfig,
+                    Callback callback);
         void cancel();
         boolean isAvailable();
     }
@@ -164,9 +171,19 @@ public class StudentPresenter {
     private float professorPressureHPa = Float.NaN; // NEW
     private int professorUltrasoundToken = -1; // NEW
     private float[] professorAmbientHash = null; // NEW
+    private UltrasoundSessionConfig professorUltrasoundConfig = null; // NEW
     private int rssiSampleCount = 0; // NEW
     private int rssiSampleSum = 0; // NEW
     private int lastRssi = -100; // NEW
+
+    // Timing fields for DiagLogger
+    private long scanStartTimeMs   = 0;
+    private long inRangeTimeMs     = 0;
+    private long verifyFlowStartMs = 0;
+    private long baroStartMs       = 0;
+    private long ultraStartMs      = 0;
+    private long audioStartMs      = 0;
+    private long dsvfStartMs       = 0;
 
     // ── Constructors ───────────────────────────────────────────────────────
 
@@ -266,9 +283,17 @@ public class StudentPresenter {
         professorPressureHPa = Float.NaN;
         professorUltrasoundToken = -1;
         professorAmbientHash = null;
+        professorUltrasoundConfig = null;
         rssiSampleCount = 0;
         rssiSampleSum = 0;
         lastRssi = -100;
+        scanStartTimeMs   = System.currentTimeMillis();
+        inRangeTimeMs     = 0;
+        verifyFlowStartMs = 0;
+        baroStartMs       = 0;
+        ultraStartMs      = 0;
+        audioStartMs      = 0;
+        dsvfStartMs       = 0;
 
         view.setScanEnabled(false);
         view.setSignalPanelVisible(true);
@@ -280,10 +305,45 @@ public class StudentPresenter {
                 handleSignalUpdate(rssi, inRange);
             }
 
-            @Override public void onProfessorMetadata(float pressureHPa, int sessionToken, float[] ambientHash) {
+            @Override public void onProfessorMetadata(float pressureHPa,
+                                                      int sessionToken,
+                                                      float[] ambientHash,
+                                                      UltrasoundSessionConfig ultrasoundConfig) {
+                DiagLogger.logAudioHashDelivered(ambientHash); // DIAG: AUDIO_HASH_DELIVERED
                 professorPressureHPa = pressureHPa > 0f ? pressureHPa : Float.NaN;
                 professorUltrasoundToken = sessionToken >= 0 ? (sessionToken & 0x0F) : -1;
-                professorAmbientHash = copyOrNull(ambientHash);
+                // BUGFIX: only replace stored hash/config when the incoming value is non-null.
+                // BLE fires every ~250ms and professor may broadcast null during startup or
+                // after a failed refresh — blindly overwriting was destroying the last good state.
+                if (ambientHash != null) {
+                    professorAmbientHash = copyOrNull(ambientHash);
+                } else {
+                    DiagLogger.log("AUDIO_HASH_NULL_GUARD",
+                            "incoming=null preserved=" + (professorAmbientHash != null ? "valid" : "null"),
+                            "", "NULL_BLOCKED");
+                }
+                if (ultrasoundConfig != null) {
+                    professorUltrasoundConfig = ultrasoundConfig;
+                    DiagLogger.log("ULTRA_CONFIG_STORED",
+                            "f0=" + ultrasoundConfig.getF0() + " f1=" + ultrasoundConfig.getF1(),
+                            "symbolMs=" + ultrasoundConfig.getSymbolDurationMs()
+                                    + " repeats=" + ultrasoundConfig.getRepeatCount(),
+                            "FSK_CONFIG_ACTIVE");
+                } else {
+                    DiagLogger.log("ULTRA_CONFIG_NULL_GUARD",
+                            "incoming=null preserved=" + (professorUltrasoundConfig != null ? "fsk" : "none"),
+                            "", "NULL_BLOCKED");
+                }
+                DiagLogger.logAudioHashStored(professorAmbientHash); // DIAG: AUDIO_HASH_STORED
+                if (ultrasoundConfig != null) {
+                    DiagLogger.log(
+                            "ULTRA_PROFILE_RX",
+                            "f0=" + ultrasoundConfig.getF0()
+                                    + " f1=" + ultrasoundConfig.getF1(),
+                            "symbolMs=" + ultrasoundConfig.getSymbolDurationMs()
+                                    + " repeats=" + ultrasoundConfig.getRepeatCount(),
+                            "STORED");
+                }
             }
 
             @Override public void onBeaconStarted() {
@@ -331,6 +391,8 @@ public class StudentPresenter {
             return;
         }
         verificationInProgress = true;
+        verifyFlowStartMs = System.currentTimeMillis();
+        DiagLogger.logVerifyFlowStart(inRangeTimeMs > 0 ? verifyFlowStartMs - inRangeTimeMs : 0); // DIAG
         final int attemptId = verificationAttemptId;
         runBarometerStep(attemptId);
     }
@@ -339,16 +401,24 @@ public class StudentPresenter {
         if (!isAttemptActive(attemptId)) return;
 
         view.showVerificationStep("Checking floor...", 2, TOTAL_STEPS);
+        baroStartMs = System.currentTimeMillis();
+        DiagLogger.logBaroStepStart(); // DIAG: BARO_STEP_START
+
         if (!barometerSignal.isAvailable() || Float.isNaN(professorPressureHPa)) {
             String note = Float.isNaN(professorPressureHPa)
                     ? "Professor floor reference unavailable; skipping floor check."
                     : "Barometer unavailable; skipping floor check.";
+            DiagLogger.logBaroStepDone(System.currentTimeMillis() - baroStartMs, 0f); // DIAG: BARO_STEP_DONE
             continueWithUltrasound(attemptId, BarometerSnapshot.unavailable(note));
             return;
         }
 
-        barometerSignal.collect(snapshot -> continueWithUltrasound(attemptId,
-                snapshot != null ? snapshot : BarometerSnapshot.unavailable("No barometer sample collected.")));
+        barometerSignal.collect(snapshot -> {
+            DiagLogger.logBaroStepDone(System.currentTimeMillis() - baroStartMs, // DIAG: BARO_STEP_DONE
+                    snapshot != null && snapshot.available ? snapshot.pressureHPa : 0f);
+            continueWithUltrasound(attemptId,
+                    snapshot != null ? snapshot : BarometerSnapshot.unavailable("No barometer sample collected."));
+        });
     }
 
     private void continueWithUltrasound(final int attemptId, final BarometerSnapshot barometerSnapshot) { // NEW
@@ -375,10 +445,15 @@ public class StudentPresenter {
             return;
         }
 
-        ultrasoundSignal.detect(sessionId, expectedToken, snapshot -> continueWithAudio(
-                attemptId,
-                barometerSnapshot,
-                snapshot != null ? snapshot : UltrasoundSnapshot.failed("Ultrasound verification did not return a result.")));
+        ultraStartMs = System.currentTimeMillis();
+        DiagLogger.logUltraStepStart(); // DIAG: ULTRA_STEP_START
+        ultrasoundSignal.detect(sessionId, expectedToken, professorUltrasoundConfig, snapshot -> {
+            DiagLogger.logUltraStepDone(System.currentTimeMillis() - ultraStartMs, // DIAG: ULTRA_STEP_DONE
+                    snapshot != null ? snapshot.detectedToken : -1,
+                    snapshot != null ? snapshot.confidence : 0f);
+            continueWithAudio(attemptId, barometerSnapshot,
+                    snapshot != null ? snapshot : UltrasoundSnapshot.failed("Ultrasound verification did not return a result."));
+        });
     }
 
     private void continueWithAudio(final int attemptId,
@@ -387,6 +462,8 @@ public class StudentPresenter {
         if (!isAttemptActive(attemptId)) return;
 
         view.showVerificationStep("Audio fingerprint...", 4, TOTAL_STEPS);
+        DiagLogger.logAudioHashUsed(professorAmbientHash); // DIAG: AUDIO_HASH_USED
+
         if (professorAmbientHash == null || professorAmbientHash.length == 0) {
             finishVerification(attemptId, barometerSnapshot, ultrasoundSnapshot,
                     AudioSnapshot.skipped("Student microphone is ready, but professor ambient audio reference is not broadcast yet; audio check skipped honestly.")); // MODIFIED
@@ -399,11 +476,27 @@ public class StudentPresenter {
             return;
         }
 
-        ambientAudioSignal.record(professorAmbientHash, snapshot -> finishVerification(
-                attemptId,
-                barometerSnapshot,
-                ultrasoundSnapshot,
-                snapshot != null ? snapshot : AudioSnapshot.skipped("Ambient audio recording returned no data.")));
+        audioStartMs = System.currentTimeMillis();
+        DiagLogger.logAudioStepStart(); // DIAG: AUDIO_STEP_START
+        ambientAudioSignal.record(professorAmbientHash, snapshot -> {
+            float cosine = (snapshot != null
+                    && snapshot.studentAmbientHash != null
+                    && snapshot.professorAmbientHash != null)
+                    ? AudioCorrelator.correlate(snapshot.professorAmbientHash, snapshot.studentAmbientHash)
+                    : 0f;
+            // Log both cosine and Pearson — they diverge significantly when
+            // the professor hash is emitter-contaminated (cosine stays ~0.99
+            // while Pearson collapses to -0.83, directly causing CONFLICT).
+            if (snapshot != null && snapshot.studentAmbientHash != null && snapshot.professorAmbientHash != null) {
+                float pearson = com.example.digitalsphere.domain.verification.DsvfAlgorithm
+                        .pearsonCorrelation(snapshot.professorAmbientHash, snapshot.studentAmbientHash);
+                DiagLogger.logAudioCorrelationDetail(cosine, pearson,
+                        snapshot.professorAmbientHash, snapshot.studentAmbientHash);
+            }
+            DiagLogger.logAudioStepDone(System.currentTimeMillis() - audioStartMs, cosine); // DIAG: AUDIO_STEP_DONE
+            finishVerification(attemptId, barometerSnapshot, ultrasoundSnapshot,
+                    snapshot != null ? snapshot : AudioSnapshot.skipped("Ambient audio recording returned no data."));
+        });
     }
 
     private void finishVerification(int attemptId,
@@ -412,7 +505,13 @@ public class StudentPresenter {
                                     AudioSnapshot audioSnapshot) { // NEW
         if (!isAttemptActive(attemptId)) return;
 
+        dsvfStartMs = System.currentTimeMillis();
+        DiagLogger.logDsvfStart(); // DIAG: DSVF_START
         VerificationResult result = verify(barometerSnapshot, ultrasoundSnapshot, audioSnapshot);
+        DiagLogger.logDsvfDone(System.currentTimeMillis() - dsvfStartMs, // DIAG: DSVF_DONE
+                result.getStatus().name(), result.getFusionScore());
+        DiagLogger.logTotalVerifyTime( // DIAG: TOTAL_VERIFY_TIME
+                verifyFlowStartMs > 0 ? System.currentTimeMillis() - verifyFlowStartMs : 0);
         verificationInProgress = false;
 
         if (view != null) {
@@ -430,6 +529,9 @@ public class StudentPresenter {
         }
 
         if (result.isPresent()) {
+            DiagLogger.logAttendanceMarked( // DIAG: ATTENDANCE_MARKED
+                    scanStartTimeMs > 0 ? System.currentTimeMillis() - scanStartTimeMs : 0,
+                    result.getStatus().name());
             beginAttendanceMark(result);
         }
     }
@@ -450,13 +552,17 @@ public class StudentPresenter {
         }
 
         int expectedToken = resolveExpectedUltrasoundToken();
-        if (ultrasoundSnapshot.attempted && expectedToken >= 0) {
-            int detectedToken = ultrasoundSnapshot.detected
-                    ? ultrasoundSnapshot.detectedToken
-                    : expectedToken; // MODIFIED
+        // Only mark ultrasound as available in the SignalReading when it was
+        // actually detected and meets the same minimum confidence floor used
+        // by the DSVF hard gate. Keeping the thresholds aligned avoids a class
+        // of device-specific failures where a real token is decoded but later
+        // discarded by the presenter as "too weak", causing the UI to show the
+        // room check as skipped on lower-gain microphones.
+        boolean ultraReliable = shouldFuseUltrasound(ultrasoundSnapshot, expectedToken);
+        if (ultraReliable) {
             builder.expectedUltrasoundToken(expectedToken)
-                    .detectedUltrasoundToken(detectedToken)
-                    .ultrasoundConfidence(ultrasoundSnapshot.detected ? ultrasoundSnapshot.confidence : 0f);
+                    .detectedUltrasoundToken(ultrasoundSnapshot.detectedToken)
+                    .ultrasoundConfidence(ultrasoundSnapshot.confidence);
         }
 
         if (audioSnapshot.studentAmbientHash != null && audioSnapshot.professorAmbientHash != null) {
@@ -482,6 +588,7 @@ public class StudentPresenter {
                 view.setScanEnabled(true);
                 view.onBeaconStarted();
 
+                DiagLogger.setReportContext(sessionId, null);
                 boolean success = repo.markPresent(studentName, deviceId, sessionId);
                 markedPresent = true;
                 if (success) {
@@ -538,6 +645,11 @@ public class StudentPresenter {
         }
         if (markedPresent || beaconStarting || verificationInProgress || verificationAttemptedInRange) return;
 
+        if (inRangeTimeMs == 0) {
+            inRangeTimeMs = System.currentTimeMillis();
+            DiagLogger.logInRangeTriggered(rssi, inRangeTimeMs - scanStartTimeMs); // DIAG: IN_RANGE_TRIGGERED
+        }
+
         String deviceId = sessionManager.buildPseudoDeviceId(studentName, sessionId);
         boolean alreadyMarked = repo.isAlreadyMarked(deviceId, sessionId);
         if (alreadyMarked) {
@@ -576,7 +688,10 @@ public class StudentPresenter {
 
     private static UltrasoundSignal createUnavailableUltrasoundSignal() { // NEW
         return new UltrasoundSignal() {
-            @Override public void detect(String sessionId, int expectedToken, Callback callback) {
+            @Override public void detect(String sessionId,
+                                         int expectedToken,
+                                         UltrasoundSessionConfig ultrasoundConfig,
+                                         Callback callback) {
                 if (callback != null) {
                     callback.onResult(UltrasoundSnapshot.skipped("Ultrasound unavailable."));
                 }
@@ -592,7 +707,10 @@ public class StudentPresenter {
 
     private static UltrasoundSignal createCompatibilityUltrasoundSignal() { // NEW
         return new UltrasoundSignal() {
-            @Override public void detect(String sessionId, int expectedToken, Callback callback) {
+            @Override public void detect(String sessionId,
+                                         int expectedToken,
+                                         UltrasoundSessionConfig ultrasoundConfig,
+                                         Callback callback) {
                 if (callback == null) return;
                 int resolvedToken = expectedToken >= 0
                         ? expectedToken
@@ -634,5 +752,16 @@ public class StudentPresenter {
     private static int deriveSessionToken(String normalizedSessionId) { // NEW
         if (normalizedSessionId == null || normalizedSessionId.isEmpty()) return 0;
         return (normalizedSessionId.hashCode() & 0x7FFFFFFF) % 16;
+    }
+
+    static boolean shouldFuseUltrasound(UltrasoundSnapshot snapshot, int expectedToken) {
+        return snapshot != null
+                && snapshot.detected
+                && snapshot.confidence >= ULTRASOUND_RELIABLE_CONFIDENCE
+                && expectedToken >= 0;
+    }
+
+    public UltrasoundSessionConfig getProfessorUltrasoundConfigForTest() {
+        return professorUltrasoundConfig;
     }
 }

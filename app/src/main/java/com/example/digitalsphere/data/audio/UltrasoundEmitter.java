@@ -3,6 +3,8 @@ package com.example.digitalsphere.data.audio;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
+import com.example.digitalsphere.data.audio.adaptive.AdaptiveUltrasoundEmitter;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -156,6 +158,7 @@ public class UltrasoundEmitter {
      *   music, HVAC all peak below 8 kHz)
      */
     static final int FREQUENCY_HZ = 18500;
+    static final int FREQUENCY_HZ_FALLBACK = 17500;
 
     /**
      * 48 000 Hz sample rate — mandatory for high-frequency accuracy.
@@ -230,8 +233,9 @@ public class UltrasoundEmitter {
 
     // ── Fields ──────────────────────────────────────────────────────────────
 
-    private final int             sessionToken;
+    private final int sessionToken;
     private final EmitterCallback callback;
+    private final UltrasoundSessionConfig sessionConfig;
 
     /** Emission state — AtomicBoolean for lock-free reads from the emit loop. */
     private final AtomicBoolean emitting = new AtomicBoolean(false);
@@ -268,6 +272,7 @@ public class UltrasoundEmitter {
      * for precise timing control.
      */
     private final short[] frameBuffer;
+    private final short[] adaptiveFrameBuffer;
 
     // ── Constructor ─────────────────────────────────────────────────────────
 
@@ -283,13 +288,7 @@ public class UltrasoundEmitter {
      *                  into the ultrasonic signal.
      */
     public UltrasoundEmitter(String sessionId) {
-        this.sessionToken = deriveToken(sessionId);
-        this.callback     = null;
-
-        // Pre-compute buffers
-        this.toneSlot    = generateWindowedTone();
-        this.silenceSlot = new short[SAMPLES_PER_BIT];
-        this.frameBuffer = buildFrameBuffer();
+        this(sessionId, null, null);
     }
 
     /**
@@ -299,12 +298,28 @@ public class UltrasoundEmitter {
      * @param callback  receives started/failed events. May be null.
      */
     public UltrasoundEmitter(String sessionId, EmitterCallback callback) {
-        this.sessionToken = deriveToken(sessionId);
-        this.callback     = callback;
+        this(sessionId, null, callback);
+    }
 
-        this.toneSlot    = generateWindowedTone();
-        this.silenceSlot = new short[SAMPLES_PER_BIT];
-        this.frameBuffer = buildFrameBuffer();
+    public UltrasoundEmitter(String sessionId,
+                             UltrasoundSessionConfig sessionConfig,
+                             EmitterCallback callback) {
+        this.sessionToken = deriveToken(sessionId);
+        this.callback = callback;
+        this.sessionConfig = sessionConfig;
+
+        if (sessionConfig == null) {
+            this.toneSlot = generateWindowedTone();
+            this.silenceSlot = new short[SAMPLES_PER_BIT];
+            this.frameBuffer = buildFrameBuffer();
+            this.adaptiveFrameBuffer = null;
+        } else {
+            this.toneSlot = new short[0];
+            this.silenceSlot = new short[0];
+            this.frameBuffer = new short[0];
+            this.adaptiveFrameBuffer = new AdaptiveUltrasoundEmitter(sessionConfig)
+                    .buildWaveform(sessionToken, 4);
+        }
     }
 
     // ── Public API ──────────────────────────────────────────────────────────
@@ -492,11 +507,13 @@ public class UltrasoundEmitter {
      */
     private short[] generateWindowedTone() {
         short[] slot = new short[SAMPLES_PER_BIT];
-        double angularFreq = 2.0 * Math.PI * FREQUENCY_HZ / SAMPLE_RATE;
+        double ang1 = 2.0 * Math.PI * FREQUENCY_HZ          / SAMPLE_RATE;
+        double ang2 = 2.0 * Math.PI * FREQUENCY_HZ_FALLBACK  / SAMPLE_RATE;
 
         for (int i = 0; i < SAMPLES_PER_BIT; i++) {
-            // Pure sine carrier
-            double sample = AMPLITUDE * Math.sin(angularFreq * i);
+            // Dual-sine carrier: 18.5 kHz + 17.5 kHz, each at 50% amplitude.
+            // Combined peak = AMPLITUDE * 0.5 * 2 = AMPLITUDE — same as before.
+            double sample = (AMPLITUDE * 0.5) * (Math.sin(ang1 * i) + Math.sin(ang2 * i));
 
             // Apply raised-cosine window to edges
             double envelope = 1.0;
@@ -535,7 +552,12 @@ public class UltrasoundEmitter {
      * emit low-level noise that corrupts the detector's silence threshold.</p>
      */
     private void emitLoop() {
-        int frameSizeBytes = frameBuffer.length * 2;  // 16-bit PCM = 2 bytes/sample
+        short[] playbackBuffer = sessionConfig != null ? adaptiveFrameBuffer : frameBuffer;
+        int playbackSampleRate = sessionConfig != null ? sessionConfig.getSampleRate() : SAMPLE_RATE;
+        int gapDurationMs = sessionConfig != null
+                ? Math.max(200, sessionConfig.getSymbolDurationMs() * sessionConfig.getRepeatCount())
+                : GAP_DURATION_MS;
+        int frameSizeBytes = playbackBuffer.length * 2;  // 16-bit PCM = 2 bytes/sample
 
         while (emitting.get() && !Thread.currentThread().isInterrupted()) {
             AudioTrack track = null;
@@ -547,7 +569,7 @@ public class UltrasoundEmitter {
                                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                                 .build())
                         .setAudioFormat(new AudioFormat.Builder()
-                                .setSampleRate(SAMPLE_RATE)
+                                .setSampleRate(playbackSampleRate)
                                 .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                                 .build())
@@ -559,8 +581,8 @@ public class UltrasoundEmitter {
                 track.setAuxEffectSendLevel(0.0f);
 
                 // ── Write pre-computed frame and play ───────────────────
-                int written = track.write(frameBuffer, 0, frameBuffer.length);
-                if (written != frameBuffer.length) {
+                int written = track.write(playbackBuffer, 0, playbackBuffer.length);
+                if (written != playbackBuffer.length) {
                     // Partial write — hardware issue, skip this cycle
                     continue;
                 }
@@ -571,7 +593,7 @@ public class UltrasoundEmitter {
                 // Frame duration = 6 slots × 200 ms = 1200 ms.
                 // We use getPlaybackHeadPosition() polling with short sleeps
                 // to detect both completion and interruption cleanly.
-                int totalFrames = frameBuffer.length;
+                int totalFrames = playbackBuffer.length;
                 while (emitting.get()
                         && !Thread.currentThread().isInterrupted()
                         && track.getPlaybackHeadPosition() < totalFrames) {
@@ -605,7 +627,7 @@ public class UltrasoundEmitter {
             // ── Inter-frame gap: true silence (no AudioTrack active) ────
             if (!emitting.get() || Thread.currentThread().isInterrupted()) break;
             try {
-                Thread.sleep(GAP_DURATION_MS);
+                Thread.sleep(gapDurationMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;

@@ -4,10 +4,12 @@ import android.content.Context;
 import android.os.CountDownTimer;
 import android.util.Log;
 import com.example.digitalsphere.contract.IProfessorView;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 import com.example.digitalsphere.data.ble.BleManager;
 import com.example.digitalsphere.data.ble.IBleManager;
 import com.example.digitalsphere.data.db.AttendanceRepository;
 import com.example.digitalsphere.data.export.CsvExporter;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 import com.example.digitalsphere.domain.IAttendanceRepository;
 import com.example.digitalsphere.domain.SessionManager;
 import com.example.digitalsphere.domain.model.ValidationResult;
@@ -42,6 +44,9 @@ public class ProfessorPresenter {
     private boolean        sessionActive  = false;
     private boolean        sessionClosed  = true;
     private CountDownTimer countDownTimer;
+    private float          currentPressureHPa = 0.0f;
+    private int            currentSessionToken = -1;
+    private UltrasoundSessionConfig currentUltrasoundConfig;
 
     // ── Constructors ───────────────────────────────────────────────────────
 
@@ -84,20 +89,29 @@ public class ProfessorPresenter {
 
     // SPRINT-1-UI: Overload for backward compatibility (tests call 2-arg version)
     public void startSession(String rawName, String rawDuration) {
-        startSession(rawName, rawDuration, 0.0f, -1, null);
+        startSession(rawName, rawDuration, 0.0f, -1, null, null);
     }
 
     // Backward compat — 3-arg version (no token)
     public void startSession(String rawName, String rawDuration, float pressureHPa) {
-        startSession(rawName, rawDuration, pressureHPa, -1, null);
+        startSession(rawName, rawDuration, pressureHPa, -1, null, null);
     }
 
     // Main entry point — accepts barometric pressure AND ultrasound token
     public void startSession(String rawName, String rawDuration, float pressureHPa, int sessionToken) {
-        startSession(rawName, rawDuration, pressureHPa, sessionToken, null);
+        startSession(rawName, rawDuration, pressureHPa, sessionToken, null, null);
     }
 
     public void startSession(String rawName, String rawDuration, float pressureHPa, int sessionToken, float[] ambientHash) {
+        startSession(rawName, rawDuration, pressureHPa, sessionToken, ambientHash, null);
+    }
+
+    public void startSession(String rawName,
+                             String rawDuration,
+                             float pressureHPa,
+                             int sessionToken,
+                             float[] ambientHash,
+                             UltrasoundSessionConfig ultrasoundConfig) {
         if (view == null) return;
 
         ValidationResult nameResult = sessionManager.validateSessionName(rawName);
@@ -117,6 +131,9 @@ public class ProfessorPresenter {
         }
 
         sessionId = sessionManager.createSessionId(rawName);
+        currentPressureHPa = pressureHPa;
+        currentSessionToken = sessionToken;
+        currentUltrasoundConfig = ultrasoundConfig;
         resetLiveSession(sessionId);
         sessionActive = true;
         sessionClosed = false;
@@ -129,7 +146,7 @@ public class ProfessorPresenter {
 
         // SPRINT-1-UI: Pass real barometric pressure + ultrasound token to BLE payload.
         // pressureHPa 0.0f = "barometer unavailable"; sessionToken -1 = "ultrasound inactive".
-        bleManager.startProfessorMode(pressureHPa, sessionToken, ambientHash, new IBleManager.ProfessorBleListener() {
+        bleManager.startProfessorMode(pressureHPa, sessionToken, ambientHash, ultrasoundConfig, new IBleManager.ProfessorBleListener() {
             @Override public void onBeaconStarted() {
                 if (view != null) {
                     view.setLoading(false);
@@ -152,6 +169,17 @@ public class ProfessorPresenter {
         });
     }
 
+    /**
+     * Pushes fresh professor-side metadata into the running BLE advertisement.
+     *
+     * <p>Used by the professor activity to refresh the ambient-audio reference
+     * while the session remains active.</p>
+     */
+    public void updateAmbientHash(float[] ambientHash) {
+        if (!sessionActive || bleManager == null || ambientHash == null) return;
+        bleManager.updateProfessorModeData(currentPressureHPa, currentSessionToken, ambientHash, currentUltrasoundConfig);
+    }
+
     public void stopSession() {
         if (sessionClosed) return;
         sessionClosed = true;
@@ -160,6 +188,7 @@ public class ProfessorPresenter {
         List<String> archivedRecords = (repo == null || archivedSessionId == null)
                 ? Collections.emptyList()
                 : repo.getAttendance(archivedSessionId);
+        DiagLogger.setReportContext(archivedSessionId, archivedRecords);
         if (countDownTimer != null) {
             countDownTimer.cancel();
             countDownTimer = null;

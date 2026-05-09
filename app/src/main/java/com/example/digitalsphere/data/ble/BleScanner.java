@@ -7,6 +7,8 @@ import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.os.ParcelUuid;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 import java.util.Collections;
 
 /** Student-side proximity scanner. Detects professor's SESSION_UUID beacon and reports RSSI. */
@@ -16,13 +18,18 @@ class BleScanner {
 
     interface Listener {
         void onResult(int rssi, boolean inRange);
-        void onProfessorMetadata(float pressureHPa, int sessionToken, float[] ambientHash);
+        void onProfessorMetadata(float pressureHPa,
+                                 int sessionToken,
+                                 float[] ambientHash,
+                                 UltrasoundSessionConfig ultrasoundConfig);
         void onError(String reason);
     }
 
     private BluetoothLeScanner scanner;
     private ScanCallback        scanCallback;
     private final Listener      listener;
+    private long    scanStartMs      = 0;
+    private boolean firstBeaconSeen  = false;
 
     BleScanner(Listener listener) { this.listener = listener; }
 
@@ -46,23 +53,36 @@ class BleScanner {
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
 
+        scanStartMs     = System.currentTimeMillis();
+        firstBeaconSeen = false;
+        DiagLogger.logScanStarted(); // DIAG: SCAN_STARTED
+
         scanCallback = new ScanCallback() {
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
+                if (!firstBeaconSeen) {
+                    firstBeaconSeen = true;
+                    DiagLogger.logFirstBeaconSeen(System.currentTimeMillis() - scanStartMs); // DIAG
+                }
                 int rssi = result.getRssi();
                 byte[] payload = null;
                 if (result.getScanRecord() != null) {
                     payload = result.getScanRecord()
                             .getManufacturerSpecificData(BleAdvertiser.COMPANY_ID);
                 }
+                DiagLogger.logAudioHashScanReceived(payload); // DIAG: AUDIO_HASH_SCAN_RECEIVED
+                float[] ambientHash = BleAdvertiser.unpackAmbientHash(payload);
+                DiagLogger.logAudioHashUnpacked(ambientHash); // DIAG: AUDIO_HASH_UNPACKED
                 listener.onProfessorMetadata(
                         BleAdvertiser.unpackPressure(payload),
                         BleAdvertiser.unpackToken(payload),
-                        BleAdvertiser.unpackAmbientHash(payload));
+                        ambientHash,
+                        BleAdvertiser.unpackAdaptiveConfig(payload));
                 listener.onResult(rssi, rssi >= RSSI_THRESHOLD);
             }
             @Override
             public void onScanFailed(int errorCode) {
+                DiagLogger.logBleScanError(errorCode); // DIAG: BLE_SCAN_ERROR
                 listener.onError(scanError(errorCode));
             }
         };

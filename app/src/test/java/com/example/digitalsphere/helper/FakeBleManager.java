@@ -1,5 +1,6 @@
 package com.example.digitalsphere.helper;
 
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 import com.example.digitalsphere.data.ble.IBleManager;
 
 /**
@@ -20,23 +21,42 @@ public class FakeBleManager implements IBleManager {
     public float   lastPressureHPa;       // MODIFIED — captures pressure arg
     public int     lastSessionToken;       // MODIFIED — captures token arg
     public float[] lastAmbientHash;
+    public UltrasoundSessionConfig lastUltrasoundConfig;
+    public int     professorUpdateCount = 0;
 
     // ── IBleManager ────────────────────────────────────────────────────────
 
     // MODIFIED — signature now includes pressure + token
     @Override
-    public void startProfessorMode(float pressureHPa, int sessionToken, float[] ambientHash, ProfessorBleListener listener) {
+    public void startProfessorMode(float pressureHPa,
+                                   int sessionToken,
+                                   float[] ambientHash,
+                                   UltrasoundSessionConfig ultrasoundConfig,
+                                   ProfessorBleListener listener) {
         this.professorListener    = listener;
         this.professorModeStarted = true;
         this.lastPressureHPa      = pressureHPa;
         this.lastSessionToken     = sessionToken;
         this.lastAmbientHash      = ambientHash;
+        this.lastUltrasoundConfig = ultrasoundConfig;
     }
 
     @Override
     public void stopProfessorMode() {
         professorModeStarted  = false;
         professorListener     = null;
+    }
+
+    @Override
+    public void updateProfessorModeData(float pressureHPa,
+                                        int sessionToken,
+                                        float[] ambientHash,
+                                        UltrasoundSessionConfig ultrasoundConfig) {
+        this.lastPressureHPa = pressureHPa;
+        this.lastSessionToken = sessionToken;
+        this.lastAmbientHash = ambientHash;
+        this.lastUltrasoundConfig = ultrasoundConfig;
+        this.professorUpdateCount++;
     }
 
     @Override
@@ -76,5 +96,14 @@ public class FakeBleManager implements IBleManager {
 
     public void simulateStudentError(String reason) {
         if (studentListener != null) studentListener.onError(reason);
+    }
+
+    public void simulateProfessorMetadata(float pressureHPa,
+                                          int sessionToken,
+                                          float[] ambientHash,
+                                          UltrasoundSessionConfig ultrasoundConfig) {
+        if (studentListener != null) {
+            studentListener.onProfessorMetadata(pressureHPa, sessionToken, ambientHash, ultrasoundConfig);
+        }
     }
 }

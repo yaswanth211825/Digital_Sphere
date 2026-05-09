@@ -16,10 +16,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import com.example.digitalsphere.R;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundCapabilities;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundCapabilityManager;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 import com.example.digitalsphere.contract.IProfessorView;
 import com.example.digitalsphere.data.audio.AmbientAudioRecorder;
 import com.example.digitalsphere.data.audio.UltrasoundEmitter;
 import com.example.digitalsphere.data.sensor.BarometerReader;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 import com.example.digitalsphere.data.sensor.ResearchLogger;
 import com.example.digitalsphere.domain.SessionManager;
 import com.example.digitalsphere.domain.model.ValidationResult;
@@ -40,6 +44,8 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
     private static final String EXTRA_AUTO_SESSION = "auto_session"; // NEW
     private static final String EXTRA_AUTO_DURATION = "auto_duration"; // NEW
     private static final String EXTRA_AUTO_START = "auto_start"; // NEW
+    private static final long AMBIENT_REFRESH_RETRY_MS = 1000L;
+    private static final long AMBIENT_REFRESH_SUCCESS_DELAY_MS = 250L;
 
     private ProfessorPresenter presenter;
     private final SessionManager sessionManager = new SessionManager();
@@ -62,7 +68,11 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
 
     /** Session ultrasound emitter — active while a real session is running. */
     private UltrasoundEmitter sessionEmitter;
+    private UltrasoundSessionConfig activeAdaptiveConfig;
     private AmbientAudioRecorder sessionAmbientRecorder;
+    private final Handler ambientRefreshHandler = new Handler(Looper.getMainLooper());
+    private boolean ambientRefreshActive = false;
+    private final Runnable ambientRefreshRunnable = this::captureNextAmbientReference;
 
     // Views
     private EditText    etSessionName;
@@ -91,6 +101,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
 
     // Track which sensors are available for the summary line
     private boolean micAvailable = false;
+    private UltrasoundCapabilities ultrasoundCapabilities;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -126,14 +137,40 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
         presenter = new ProfessorPresenter(this);
         presenter.attach(this);
 
+        ultrasoundCapabilities = UltrasoundCapabilityManager.probe(this);
+
         // SPRINT-1-UI: Initialize all sensors and show availability
         initSensors();
+
+        // DIAG: one-time device capability snapshot
+        DiagLogger.logDeviceInfo();
+        DiagLogger.logBleAdvertiseSupport();
+        DiagLogger.logBleScanSupport();
+        DiagLogger.logMicPermission(
+                checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED);
+        DiagLogger.logUnprocessedAudioSupport();
+        DiagLogger.logBarometerPresent(barometerAvailable);
+        DiagLogger.logAudioBufferSize();
+        DiagLogger.logAudioRecordState();
+        DiagLogger.log(
+                "ULTRA_CAPABILITY",
+                "micNearUltrasound=" + ultrasoundCapabilities.isMicNearUltrasound()
+                        + " speakerNearUltrasound=" + ultrasoundCapabilities.isSpeakerNearUltrasound(),
+                "recommendedSource=" + ultrasoundCapabilities.getRecommendedAudioSource().name(),
+                ultrasoundCapabilities.isUltrasoundWeak() ? "WEAK" : "STRONG");
 
         btnStart.setOnClickListener(v -> beginSessionStart());
 
         btnStop.setOnClickListener(v -> presenter.stopSession());
 
         btnExport.setOnClickListener(v -> presenter.exportCsv());
+
+        // Long-press export button → share all diagnostic CSV logs
+        btnExport.setOnLongClickListener(v -> {
+            DiagLogger.shareLogs(this);
+            return true;
+        });
 
         // DEBUG: Temporary ultrasound test — REMOVE after hardware verification
         initDebugUltrasoundButton();
@@ -177,6 +214,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
             sessionAmbientRecorder.shutdown();
             sessionAmbientRecorder = null;
         }
+        stopAmbientRefreshLoop();
         // DEBUG: Stop ultrasound test if running
         if (debugEmitter != null) {
             debugEmitter.stopEmitting();
@@ -217,6 +255,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
         sessionAmbientRecorder.recordAndFingerprint(new AmbientAudioRecorder.RecordingCallback() {
             @Override
             public void onFingerprintReady(float[] hash) {
+                DiagLogger.logAudioHashRecorded(hash); // DIAG: AUDIO_HASH_RECORDED
                 runOnUiThread(() -> {
                     tvAudioStatus.setText("🎵 Audio: ✅ Ambient reference captured");
                     tvAudioStatus.setTextColor(Color.parseColor("#2ECC71"));
@@ -226,6 +265,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
 
             @Override
             public void onRecordingFailed(String reason) {
+                DiagLogger.logAmbientRecordFailed(reason); // DIAG: AMBIENT_RECORD_FAILED
                 runOnUiThread(() -> {
                     tvAudioStatus.setText("🎵 Audio: ⚠️ Reference capture failed — continuing without audio");
                     tvAudioStatus.setTextColor(Color.parseColor("#F39C12"));
@@ -244,6 +284,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
                                       String normalizedSessionId,
                                       float[] ambientHash) { // NEW
         int sessionToken = -1;
+        activeAdaptiveConfig = buildDefaultAdaptiveConfig();
         if (micAvailable) {
             ensureSessionPlaybackVolume();
 
@@ -252,7 +293,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
                 sessionEmitter = null;
             }
 
-            sessionEmitter = new UltrasoundEmitter(normalizedSessionId, new UltrasoundEmitter.EmitterCallback() {
+            sessionEmitter = new UltrasoundEmitter(normalizedSessionId, activeAdaptiveConfig, new UltrasoundEmitter.EmitterCallback() {
                 @Override
                 public void onEmissionStarted() {
                     runOnUiThread(() -> {
@@ -264,6 +305,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
 
                 @Override
                 public void onEmissionFailed(String reason) {
+                    DiagLogger.logUltrasoundEmitFailed(reason); // DIAG: ULTRASOUND_EMIT_FAILED
                     runOnUiThread(() -> {
                         tvUltrasoundStatus.setText("🔊 Ultrasound: ❌ Failed — " + reason);
                         tvUltrasoundStatus.setTextColor(Color.parseColor("#E74C3C"));
@@ -276,12 +318,81 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
             sessionEmitter.startEmitting();
         }
 
+        if (activeAdaptiveConfig != null) {
+            DiagLogger.log(
+                    "ULTRA_PROFILE_TX",
+                    "f0=" + activeAdaptiveConfig.getF0()
+                            + " f1=" + activeAdaptiveConfig.getF1(),
+                    "symbolMs=" + activeAdaptiveConfig.getSymbolDurationMs()
+                            + " repeats=" + activeAdaptiveConfig.getRepeatCount(),
+                    "READY");
+        }
+
         presenter.startSession(
                 sessionName,
                 rawDuration,
                 currentPressureHPa,
                 sessionToken,
-                ambientHash);
+                ambientHash,
+                activeAdaptiveConfig);
+    }
+
+    private void startAmbientRefreshLoop() {
+        // BUGFIX: the refresh loop captured audio while the ultrasound emitter was playing
+        // 17400 Hz on the speaker. The mic picked up the tone through device-body coupling,
+        // causing Pearson correlation to swing from -0.834 to +0.973 across 2.5-second frames.
+        // The initial hash (captured before the emitter starts in beginSessionStart) is the
+        // only uncontaminated reference. We deliberately do not refresh it mid-session.
+        // Logged data confirms: cosine stays 0.98-0.99 while Pearson collapses to -0.83,
+        // which is what triggers the CONFLICT at fusion score 0.35.
+        DiagLogger.log("AMBIENT_REFRESH_LOOP", "status=disabled",
+                "reason=emitter_contamination_confirmed", "STABLE_HASH");
+    }
+
+    private void stopAmbientRefreshLoop() {
+        ambientRefreshActive = false;
+        ambientRefreshHandler.removeCallbacks(ambientRefreshRunnable);
+    }
+
+    private void captureNextAmbientReference() {
+        if (!ambientRefreshActive || sessionAmbientRecorder == null || !presenter.isSessionActive()) {
+            return;
+        }
+
+        sessionAmbientRecorder.recordAndFingerprint(new AmbientAudioRecorder.RecordingCallback() {
+            @Override
+            public void onFingerprintReady(float[] hash) {
+                DiagLogger.logAudioHashRecorded(hash);
+                presenter.updateAmbientHash(hash);
+
+                runOnUiThread(() -> {
+                    tvAudioStatus.setText("🎵 Audio: ✅ Live ambient reference refreshing");
+                    tvAudioStatus.setTextColor(Color.parseColor("#2ECC71"));
+                });
+
+                if (ambientRefreshActive && presenter.isSessionActive()) {
+                    ambientRefreshHandler.postDelayed(
+                            ambientRefreshRunnable,
+                            AMBIENT_REFRESH_SUCCESS_DELAY_MS);
+                }
+            }
+
+            @Override
+            public void onRecordingFailed(String reason) {
+                DiagLogger.logAmbientRecordFailed(reason);
+
+                runOnUiThread(() -> {
+                    tvAudioStatus.setText("🎵 Audio: ⚠️ Live reference refresh failed — retrying");
+                    tvAudioStatus.setTextColor(Color.parseColor("#F39C12"));
+                });
+
+                if (ambientRefreshActive && presenter.isSessionActive()) {
+                    ambientRefreshHandler.postDelayed(
+                            ambientRefreshRunnable,
+                            AMBIENT_REFRESH_RETRY_MS);
+                }
+            }
+        });
     }
 
     // ── DEBUG: Temporary ultrasound test — REMOVE after hardware verification ──
@@ -444,8 +555,13 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
                 == android.content.pm.PackageManager.PERMISSION_GRANTED;
 
         if (micAvailable) {
-            tvUltrasoundStatus.setText("🔊 Ultrasound: ✅ Ready (emitter on this device)");
-            tvUltrasoundStatus.setTextColor(Color.parseColor("#2ECC71"));
+            if (ultrasoundCapabilities != null && ultrasoundCapabilities.isSpeakerNearUltrasound()) {
+                tvUltrasoundStatus.setText("🔊 Ultrasound: ✅ Ready (speaker reports near-ultrasound support)");
+                tvUltrasoundStatus.setTextColor(Color.parseColor("#2ECC71"));
+            } else {
+                tvUltrasoundStatus.setText("🔊 Ultrasound: ⚠️ Speaker reports weak near-ultrasound support");
+                tvUltrasoundStatus.setTextColor(Color.parseColor("#F39C12"));
+            }
 
             tvAudioStatus.setText("🎵 Audio: ✅ Ready (mic available)");
             tvAudioStatus.setTextColor(Color.parseColor("#2ECC71"));
@@ -579,6 +695,8 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
         // SPRINT-1-UI: Update BLE status in sensor card
         tvBleStatus.setText("📡 BLE: ✅ Broadcasting");
         tvBleStatus.setTextColor(Color.parseColor("#2ECC71"));
+
+        startAmbientRefreshLoop();
     }
 
     @Override public void showError(String message) {
@@ -612,6 +730,7 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
         currentSessionId = "";
         tvSessionStatus.setText("Session: Inactive");
         tvCountdown.setText("");
+        stopAmbientRefreshLoop();
 
         // Stop session ultrasound emitter when session ends
         if (sessionEmitter != null) {
@@ -627,11 +746,17 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
         if (sessionAmbientRecorder != null) {
             sessionAmbientRecorder.shutdown();
             sessionAmbientRecorder = null;
+            if (micAvailable) {
+                tvAudioStatus.setText("🎵 Audio: ✅ Ready to capture session reference");
+                tvAudioStatus.setTextColor(Color.parseColor("#2ECC71"));
+            }
         }
 
         // SPRINT-1-UI: Reset BLE status in sensor card
         tvBleStatus.setText("📡 BLE: Idle");
         tvBleStatus.setTextColor(Color.parseColor("#888888"));
+
+        DiagLogger.promptAndSend(this, "professor");
     }
 
     // ── Sensor warning banner ────────────────────────────────────────────
@@ -644,5 +769,20 @@ public class ProfessorActivity extends AppCompatActivity implements IProfessorVi
             tvSensorWarningText.setText(message);
             bannerSensorWarning.setVisibility(android.view.View.VISIBLE);
         }
+    }
+
+    private UltrasoundSessionConfig buildDefaultAdaptiveConfig() {
+        // Chirp sweep bounds: f0 = low end (upchirp start / downchirp end),
+        //                     f1 = high end (upchirp end / downchirp start).
+        // 17200 and 18800 are valid 200 Hz-step indices (1 and 9) in the BLE sweep list.
+        // Bandwidth = 1600 Hz, TBP = 1600 × 0.040 = 64 → ~18 dB matched-filter gain.
+        // Wider than the old FSK pair (17400/18400, 1000 Hz, TBP=40) for better SNR.
+        int f0 = 17200;
+        int f1 = 18800;
+
+        return UltrasoundSessionConfig.builder(f0, f1)
+                .symbolDurationMs(UltrasoundSessionConfig.DEFAULT_SYMBOL_DURATION_MS)
+                .repeatCount(UltrasoundSessionConfig.DEFAULT_REPEAT_COUNT)
+                .build();
     }
 }

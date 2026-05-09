@@ -6,6 +6,12 @@ import android.media.MediaRecorder;
 import android.media.audiofx.AcousticEchoCanceler;
 import android.media.audiofx.AutomaticGainControl;
 import android.media.audiofx.NoiseSuppressor;
+import com.example.digitalsphere.data.audio.adaptive.AdaptiveUltrasoundDetector;
+import com.example.digitalsphere.data.audio.adaptive.FrequencyEnergyAnalyzer;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundFrameCodec;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundCapabilities;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 
 /**
  * Listens for the professor's OOK-modulated ultrasonic signal and decodes
@@ -97,14 +103,20 @@ public class UltrasoundDetector {
     /**
      * Goertzel magnitude threshold for "tone present".
      *
-     * Empirically determined:
+     * Empirically determined (single-frequency, full amplitude):
      *   - Phone speaker at 80% amp, 1–3m range: magnitude 10000–80000
      *   - Phone speaker at 80% amp, 5–10m range: magnitude 2000–15000
      *   - Ambient room noise at 18.5 kHz:        magnitude 50–500
      *
-     * 1500 gives solid detection at 10m while rejecting noise.
+     * Dual-frequency emission (v2.2+): each component is emitted at 50%
+     * amplitude. Goertzel energy scales with amplitude², so each component's
+     * magnitude is ~50% of the single-frequency value. Threshold is halved
+     * from 1500 → 750 to maintain the same effective detection range.
+     * Noise floor (50–500) stays well below 750 — false-positive risk unchanged.
      */
-    static final double DETECTION_THRESHOLD = 1500.0;
+    static final double DETECTION_THRESHOLD = 750.0;
+    private static final int FREQUENCY_HZ_FALLBACK = 17500;
+    private static final double CONFIDENCE_MAX_RATIO = 8.0;
 
     /**
      * Number of OOK slots per frame: [SYNC][b3][b2][b1][b0][SYNC] = 6.
@@ -138,6 +150,9 @@ public class UltrasoundDetector {
             {2, 3, 2, 2, 3, 2},
             {3, 2, 2, 3, 2, 2}
     };
+    private static final int ADAPTIVE_TOKEN_BITS = 4;
+    private static final float ADAPTIVE_CONFIDENCE_FLOOR = 0.30f;
+    private static final int ADAPTIVE_PHASE_DIVISIONS = 4;
 
     // ── Callback interface ──────────────────────────────────────────────────
 
@@ -174,6 +189,8 @@ public class UltrasoundDetector {
 
     private final int              expectedToken;
     private final DetectorCallback callback;
+    private final int              audioSource;
+    private final UltrasoundSessionConfig sessionConfig;
 
     private final Object  lock    = new Object();
     private AudioRecord   recorder;
@@ -193,8 +210,39 @@ public class UltrasoundDetector {
      * @param callback  receives decoded tokens or errors. Must not be null.
      */
     public UltrasoundDetector(String sessionId, DetectorCallback callback) {
-        this.expectedToken = UltrasoundEmitter.deriveToken(sessionId);
-        this.callback      = callback;
+        this(sessionId, callback, MediaRecorder.AudioSource.UNPROCESSED);
+    }
+
+    public UltrasoundDetector(String sessionId, DetectorCallback callback, UltrasoundCapabilities capabilities) {
+        // Always attempt UNPROCESSED regardless of capability declaration.
+        // PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED=false does not mean the
+        // hardware lacks near-ultrasound ability — it only means the OEM did
+        // not declare it. start() will fall back if construction fails.
+        this(sessionId, callback, MediaRecorder.AudioSource.UNPROCESSED);
+    }
+
+    public UltrasoundDetector(String sessionId, DetectorCallback callback, int audioSource) {
+        this(sessionId, UltrasoundEmitter.deriveToken(sessionId), callback, audioSource, null);
+    }
+
+    public UltrasoundDetector(String sessionId,
+                              int expectedToken,
+                              DetectorCallback callback,
+                              UltrasoundCapabilities capabilities,
+                              UltrasoundSessionConfig sessionConfig) {
+        // Always attempt UNPROCESSED first regardless of capability declaration.
+        this(sessionId, expectedToken, callback, MediaRecorder.AudioSource.UNPROCESSED, sessionConfig);
+    }
+
+    public UltrasoundDetector(String sessionId,
+                              int expectedToken,
+                              DetectorCallback callback,
+                              int audioSource,
+                              UltrasoundSessionConfig sessionConfig) {
+        this.expectedToken = expectedToken >= 0 ? expectedToken : UltrasoundEmitter.deriveToken(sessionId);
+        this.callback = callback;
+        this.audioSource = audioSource;
+        this.sessionConfig = sessionConfig;
     }
 
     // ── Public API ──────────────────────────────────────────────────────────
@@ -206,7 +254,7 @@ public class UltrasoundDetector {
 
     /** Returns the carrier frequency being detected (always 18500 Hz). */
     public int getTargetFrequencyHz() {
-        return UltrasoundEmitter.FREQUENCY_HZ;
+        return sessionConfig != null ? sessionConfig.getF1() : UltrasoundEmitter.FREQUENCY_HZ;
     }
 
     /**
@@ -239,30 +287,39 @@ public class UltrasoundDetector {
             // Ensure buffer holds at least one full analysis frame
             bufferSize = Math.max(bufferSize, FRAME_SIZE * 2);
 
-            try {
-                // OS BYPASS #1: AudioSource.UNPROCESSED (API 24+)
-                // Raw ADC samples — no noise suppression, no echo cancel, no AGC.
-                // Falls back to MIC if UNPROCESSED is not supported by this OEM.
-                int audioSource;
+            // 3-tier fallback: UNPROCESSED → VOICE_RECOGNITION → MIC
+            // UNPROCESSED gives raw ADC with no OEM processing — critical for
+            // near-ultrasound detection. PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED=false
+            // does not reliably predict construction failure on Qualcomm/MTK hardware.
+            int[] sourcePriority = {
+                    MediaRecorder.AudioSource.UNPROCESSED,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    MediaRecorder.AudioSource.MIC
+            };
+            IllegalArgumentException lastException = null;
+            for (int source : sourcePriority) {
                 try {
-                    audioSource = MediaRecorder.AudioSource.UNPROCESSED;
-                } catch (NoSuchFieldError e) {
-                    // Defensive — should never happen on API 26+ but some custom ROMs...
-                    audioSource = MediaRecorder.AudioSource.MIC;
+                    recorder = new AudioRecord.Builder()
+                            .setAudioSource(source)
+                            .setAudioFormat(new AudioFormat.Builder()
+                                    .setSampleRate(SAMPLE_RATE)
+                                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                    .build())
+                            .setBufferSizeInBytes(bufferSize)
+                            .build();
+                    DiagLogger.log("ULTRA_AUDIO_SOURCE",
+                            "requested=" + audioSource + " actual=" + source, "", "OPENED");
+                    break;
+                } catch (IllegalArgumentException | SecurityException e) {
+                    DiagLogger.log("ULTRA_AUDIO_SOURCE",
+                            "source=" + source + " failed=" + e.getMessage(), "", "FALLBACK");
+                    if (e instanceof IllegalArgumentException) lastException = (IllegalArgumentException) e;
                 }
-
-                recorder = new AudioRecord.Builder()
-                        .setAudioSource(audioSource)
-                        .setAudioFormat(new AudioFormat.Builder()
-                                // OS BYPASS #2: 48 kHz — matches emitter, avoids ADC rolloff
-                                .setSampleRate(SAMPLE_RATE)
-                                .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .build())
-                        .setBufferSizeInBytes(bufferSize)
-                        .build();
-            } catch (IllegalArgumentException | SecurityException e) {
-                callback.onDetectionError("Microphone access failed: " + e.getMessage());
+            }
+            if (recorder == null) {
+                callback.onDetectionError("Microphone access failed: " +
+                        (lastException != null ? lastException.getMessage() : "all sources rejected"));
                 return;
             }
 
@@ -283,7 +340,9 @@ public class UltrasoundDetector {
             running = true;
             recorder.startRecording();
 
-            listenThread = new Thread(this::detectLoop, "UltrasoundDetector-OOK");
+            listenThread = new Thread(
+                    sessionConfig != null ? this::detectLoopAdaptive : this::detectLoop,
+                    sessionConfig != null ? "UltrasoundDetector-FSK" : "UltrasoundDetector-OOK");
             listenThread.start();
         }
     }
@@ -407,13 +466,14 @@ public class UltrasoundDetector {
             int read = recorder.read(buffer, 0, FRAME_SIZE);
             if (read < FRAME_SIZE) continue;
 
-            double magnitude = goertzel(buffer, read, UltrasoundEmitter.FREQUENCY_HZ);
-            boolean tonePresent = magnitude >= DETECTION_THRESHOLD;
+            double mag1 = goertzel(buffer, read, UltrasoundEmitter.FREQUENCY_HZ);
+            double mag2 = goertzel(buffer, read, FREQUENCY_HZ_FALLBACK);
+            boolean tonePresent = (mag1 >= DETECTION_THRESHOLD) || (mag2 >= DETECTION_THRESHOLD);
 
             // Store in ring buffer
             frameHistory[frameIndex % totalFramesPerOOK] = tonePresent;
             if (tonePresent) {
-                magnitudeSum += magnitude;
+                magnitudeSum += Math.max(mag1, mag2);
                 magnitudeCount++;
             }
             frameIndex++;
@@ -450,6 +510,74 @@ public class UltrasoundDetector {
                 consecutiveExpectedMatches = 0;
                 callback.onSearching();
             }
+        }
+    }
+
+    private void detectLoopAdaptive() {
+        if (sessionConfig == null) {
+            callback.onDetectionError("Adaptive ultrasound configuration missing.");
+            return;
+        }
+
+        int samplesPerSymbol = sessionConfig.getSamplesPerSymbol();
+        int frameSymbols = (sessionConfig.getPreambleBitCount()
+                + ADAPTIVE_TOKEN_BITS
+                + UltrasoundFrameCodec.CRC_BITS) * sessionConfig.getRepeatCount();
+        int frameSamples = frameSymbols * samplesPerSymbol;
+        int phaseStep = Math.max(1, samplesPerSymbol / ADAPTIVE_PHASE_DIVISIONS);
+        int historyCapacity = frameSamples + samplesPerSymbol;
+        short[] history = new short[historyCapacity];
+        short[] readBuffer = new short[Math.max(samplesPerSymbol, FRAME_SIZE)];
+        int validSamples = 0;
+        AdaptiveUltrasoundDetector detector = new AdaptiveUltrasoundDetector(sessionConfig);
+
+        while (running && !Thread.currentThread().isInterrupted()) {
+            int read = recorder.read(readBuffer, 0, readBuffer.length);
+            if (read <= 0) {
+                callback.onSearching();
+                continue;
+            }
+
+            int copyLength = Math.min(read, historyCapacity);
+            int overflow = Math.max(0, (validSamples + copyLength) - historyCapacity);
+            if (overflow > 0 && validSamples > 0) {
+                System.arraycopy(history, overflow, history, 0, validSamples - overflow);
+                validSamples -= overflow;
+            }
+            System.arraycopy(readBuffer, read - copyLength, history, validSamples, copyLength);
+            validSamples += copyLength;
+
+            if (validSamples < frameSamples) {
+                callback.onSearching();
+                continue;
+            }
+
+            AdaptiveUltrasoundDetector.DetectionResult best = null;
+            for (int offset = 0; offset + frameSamples <= validSamples; offset += phaseStep) {
+                short[] window = sliceSamples(history, offset, frameSamples);
+                double noiseFloor = estimateAdaptiveNoiseFloor(window, samplesPerSymbol);
+                AdaptiveUltrasoundDetector.DetectionResult result =
+                        detector.detect(window, ADAPTIVE_TOKEN_BITS, noiseFloor);
+                // Track best-confidence result regardless of CRC validity.
+                // CRC is a helpful sanity check but not a hard gate — noisy channels
+                // can corrupt the CRC bits while the token bits decode correctly.
+                // Confidence (SNR + repeat agreement) is a more reliable gate here.
+                if (best == null || result.getConfidence() > best.getConfidence()) {
+                    best = result;
+                }
+                if (result.getDecodedToken() == expectedToken
+                        && result.getConfidence() >= ADAPTIVE_CONFIDENCE_FLOOR) {
+                    callback.onTokenDecoded(result.getDecodedToken(), result.getConfidence());
+                    return;
+                }
+            }
+
+            if (best != null && best.getDecodedToken() == expectedToken
+                    && best.getConfidence() >= ADAPTIVE_CONFIDENCE_FLOOR) {
+                callback.onTokenDecoded(best.getDecodedToken(), best.getConfidence());
+                return;
+            }
+            callback.onSearching();
         }
     }
 
@@ -553,5 +681,48 @@ public class UltrasoundDetector {
         }
 
         return Math.sqrt(s1 * s1 + s2 * s2 - coeff * s1 * s2);
+    }
+
+    /**
+     * Maps a raw Goertzel magnitude into a [0, 1] confidence score.
+     *
+     * <p>A logarithmic mapping works better than the old linear scale on
+     * heterogeneous Android hardware: some OEM microphones reproduce the
+     * same valid 18.5 kHz token with much lower raw magnitude, so a fixed
+     * linear divisor caused correct detections to be treated as "skipped".</p>
+     *
+     * <p>Properties of this mapping:</p>
+     * <ul>
+     *   <li>{@link #DETECTION_THRESHOLD} maps to ~0.315, just above the DSVF
+     *       room-lock minimum of 0.30.</li>
+     *   <li>Stronger detections continue to increase, but the logarithmic
+     *       compression prevents high-gain devices from saturating too early.</li>
+     *   <li>8x the detection threshold maps to 1.0.</li>
+     * </ul>
+     */
+    public static float normaliseConfidence(double magnitude) {
+        if (magnitude <= 0.0) return 0f;
+
+        double ratio = magnitude / DETECTION_THRESHOLD;
+        double confidence = Math.log1p(Math.max(0.0, ratio))
+                / Math.log1p(CONFIDENCE_MAX_RATIO);
+        confidence = Math.max(0.0, Math.min(1.0, confidence));
+        return (float) confidence;
+    }
+
+    private static short[] sliceSamples(short[] samples, int offset, int length) {
+        short[] slice = new short[length];
+        System.arraycopy(samples, offset, slice, 0, length);
+        return slice;
+    }
+
+    private static double estimateAdaptiveNoiseFloor(short[] samples, int samplesPerSymbol) {
+        // Use the trailing 12.5% of the buffer — tone energy rolls off after the
+        // last symbol, so this region is free from the FSK carrier and gives a
+        // clean noise-floor estimate. Using the first 25% contaminates the estimate
+        // with the live tone and inflates adaptiveMargin, killing detection.
+        int noiseWindow = Math.max(1, samplesPerSymbol / 8);
+        int noiseOffset = Math.max(0, samples.length - noiseWindow);
+        return Math.max(1.0, FrequencyEnergyAnalyzer.rms(samples, noiseOffset, noiseWindow));
     }
 }

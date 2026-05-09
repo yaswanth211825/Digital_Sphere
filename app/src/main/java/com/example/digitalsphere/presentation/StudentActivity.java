@@ -17,7 +17,11 @@ import com.example.digitalsphere.R;
 import com.example.digitalsphere.contract.IStudentView;
 import com.example.digitalsphere.data.audio.AmbientAudioRecorder; // NEW
 import com.example.digitalsphere.data.audio.UltrasoundDetector;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundCapabilities;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundCapabilityManager;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 import com.example.digitalsphere.data.sensor.BarometerReader;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 import com.example.digitalsphere.domain.verification.VerificationResult; // NEW
 import com.example.digitalsphere.domain.verification.VerificationStatus; // NEW
 import com.example.digitalsphere.presenter.StudentPresenter;
@@ -38,11 +42,12 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
     private static final int RSSI_MAX = -30;
     private static final int BAROMETER_SAMPLE_TARGET = 5; // NEW
     private static final long BAROMETER_TIMEOUT_MS = 1200L; // NEW
-    private static final long ULTRASOUND_TIMEOUT_MS = 4000L; // NEW
+    private static final long ULTRASOUND_TIMEOUT_MS = 5500L; // NEW
 
     private StudentPresenter presenter;
 
     private boolean hasBarometerHardware; // NEW
+    private UltrasoundCapabilities ultrasoundCapabilities; // NEW
     private StudentPresenter.BarometerSignal barometerSignal; // NEW
     private StudentPresenter.UltrasoundSignal ultrasoundSignal; // NEW
     private StudentPresenter.AmbientAudioSignal ambientAudioSignal; // NEW
@@ -92,10 +97,27 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
         bannerSensorCaps = findViewById(R.id.banner_sensor_caps);
         tvSensorCapsDetail = findViewById(R.id.tv_sensor_caps_detail);
 
+        ultrasoundCapabilities = UltrasoundCapabilityManager.probe(this); // NEW
         hasBarometerHardware = detectBarometerHardware(); // NEW
         barometerSignal = createBarometerSignal(); // NEW
         ultrasoundSignal = createUltrasoundSignal(); // NEW
         ambientAudioSignal = createAmbientAudioSignal(); // NEW
+
+        // DIAG: one-time device capability snapshot (student side)
+        DiagLogger.logDeviceInfo();
+        DiagLogger.logBleAdvertiseSupport();
+        DiagLogger.logBleScanSupport();
+        DiagLogger.logMicPermission(hasMicPermission());
+        DiagLogger.logUnprocessedAudioSupport();
+        DiagLogger.logBarometerPresent(hasBarometerHardware);
+        DiagLogger.logAudioBufferSize();
+        DiagLogger.logAudioRecordState();
+        DiagLogger.log(
+                "ULTRA_CAPABILITY",
+                "micNearUltrasound=" + ultrasoundCapabilities.isMicNearUltrasound()
+                        + " speakerNearUltrasound=" + ultrasoundCapabilities.isSpeakerNearUltrasound(),
+                "recommendedSource=" + ultrasoundCapabilities.getRecommendedAudioSource().name(),
+                ultrasoundCapabilities.isUltrasoundWeak() ? "WEAK" : "STRONG");
 
         presenter = new StudentPresenter(this, barometerSignal, ultrasoundSignal, ambientAudioSignal); // MODIFIED
         presenter.attach(this);
@@ -113,8 +135,14 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
                 presenter.startScan(
                         etName.getText().toString().trim(),
                         etSessionId.getText().toString().trim(),
-                        hasMicPermission());
+                        true); // always allow ultrasound; isAvailable() gate inside handles missing mic
             }
+        });
+
+        // Long-press scan button → share all diagnostic CSV logs
+        btnScan.setOnLongClickListener(v -> {
+            DiagLogger.shareLogs(this);
+            return true;
         });
 
         applyAutomationExtras(); // NEW
@@ -239,7 +267,10 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
                     deliver(StudentPresenter.UltrasoundSnapshot.failed("Timed out waiting for professor ultrasound."));
 
             @Override
-            public void detect(String sessionId, int expectedToken, Callback callback) {
+            public void detect(String sessionId,
+                               int expectedToken,
+                               UltrasoundSessionConfig ultrasoundConfig,
+                               Callback callback) {
                 cancel();
                 activeCallback = callback;
 
@@ -248,12 +279,15 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
                     return;
                 }
 
-                activeDetector = new UltrasoundDetector(sessionId, new UltrasoundDetector.DetectorCallback() {
+                final boolean adaptiveMode = ultrasoundConfig != null;
+                activeDetector = new UltrasoundDetector(sessionId, expectedToken, new UltrasoundDetector.DetectorCallback() {
                     @Override
-                    public void onTokenDecoded(int token, double magnitude) {
+                    public void onTokenDecoded(int token, double signalScore) {
                         deliver(StudentPresenter.UltrasoundSnapshot.matched(
                                 token,
-                                normalizeUltrasoundConfidence(magnitude)));
+                                adaptiveMode
+                                        ? (float) Math.max(0.0, Math.min(1.0, signalScore))
+                                        : normalizeUltrasoundConfidence(signalScore)));
                     }
 
                     @Override
@@ -265,7 +299,7 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
                     public void onDetectionError(String reason) {
                         deliver(StudentPresenter.UltrasoundSnapshot.failed(reason));
                     }
-                });
+                }, ultrasoundCapabilities, ultrasoundConfig);
 
                 activeDetector.start();
                 handler.postDelayed(timeoutRunnable, ULTRASOUND_TIMEOUT_MS);
@@ -316,11 +350,13 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
                     return;
                 }
 
+                DiagLogger.logAudioRecordStart(true); // DIAG: AUDIO_RECORD_START (permission already checked above)
                 activeRecorder = new AmbientAudioRecorder();
                 float[] professorCopy = copyArray(professorAmbientHash);
                 activeRecorder.recordAndFingerprint(new AmbientAudioRecorder.RecordingCallback() {
                     @Override
                     public void onFingerprintReady(float[] hash) {
+                        DiagLogger.logAudioRecordDone(hash); // DIAG: AUDIO_RECORD_DONE
                         deliver(StudentPresenter.AudioSnapshot.captured(
                                 hash,
                                 professorCopy,
@@ -329,6 +365,7 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
 
                     @Override
                     public void onRecordingFailed(String reason) {
+                        DiagLogger.logAmbientRecordFailed(reason); // DIAG: AMBIENT_RECORD_FAILED
                         deliver(StudentPresenter.AudioSnapshot.skipped(reason));
                     }
                 });
@@ -385,9 +422,7 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
     }
 
     private float normalizeUltrasoundConfidence(double magnitude) { // NEW
-        double confidence = magnitude / (1500.0 * 4.0);
-        confidence = Math.max(0.0, Math.min(1.0, confidence));
-        return (float) confidence;
+        return UltrasoundDetector.normaliseConfidence(magnitude);
     }
 
     private float estimateAudioSnr(float[] hash) { // NEW
@@ -513,6 +548,7 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
             tvStatus.setText("Status: ✅ Attendance marked!");
             tvSignalLabel.setText("Attendance recorded");
             Toast.makeText(this, "✅ Attendance marked successfully!", Toast.LENGTH_LONG).show();
+            DiagLogger.promptAndSend(this, "student");
         }); // MODIFIED
     }
 
@@ -630,6 +666,10 @@ public class StudentActivity extends AppCompatActivity implements IStudentView {
             sb.append(hasUltrasound
                     ? "🔊 Room check: Ready\n"
                     : "🔊 Room check: Skipped - mic unavailable\n");
+
+            if (hasUltrasound && ultrasoundCapabilities != null && ultrasoundCapabilities.isUltrasoundWeak()) {
+                sb.append("   Adaptive mode: device reports weak near-ultrasound support; runtime calibration/fallback recommended\n");
+            }
 
             if (hasAudio) {
                 sb.append("🎵 Audio check: Student mic ready; compares when professor reference is available\n"); // MODIFIED

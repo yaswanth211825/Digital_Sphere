@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="500" viewBox="0 0 980 500">
+<style>text{font-family:Helvetica,Arial,sans-serif;fill:#222} .small{font-size:12px} .label{font-size:14px} .title{font-size:22px;font-weight:700} .axis{stroke:#444;stroke-width:1.2} .grid{stroke:#d0d0d0;stroke-width:1} </style>
+<text x="490" y="34" text-anchor="middle" class="title">Mean Stage Latency by Ultrasound Outcome</text>
+<line x1="180.00" y1="70" x2="180.00" y2="420" class="grid"/>
+<text x="180.00" y="444" text-anchor="middle" class="small">0.0s</text>
+<line x1="334.00" y1="70" x2="334.00" y2="420" class="grid"/>
+<text x="334.00" y="444" text-anchor="middle" class="small">1.4s</text>
+<line x1="488.00" y1="70" x2="488.00" y2="420" class="grid"/>
+<text x="488.00" y="444" text-anchor="middle" class="small">2.9s</text>
+<line x1="642.00" y1="70" x2="642.00" y2="420" class="grid"/>
+<text x="642.00" y="444" text-anchor="middle" class="small">4.3s</text>
+<line x1="796.00" y1="70" x2="796.00" y2="420" class="grid"/>
+<text x="796.00" y="444" text-anchor="middle" class="small">5.8s</text>
+<line x1="950.00" y1="70" x2="950.00" y2="420" class="grid"/>
+<text x="950.00" y="444" text-anchor="middle" class="small">7.2s</text>
+<line x1="180" y1="420" x2="950" y2="420" class="axis"/>
+<text x="565.0" y="480" text-anchor="middle" class="label">Mean verification latency</text>
+<text x="166" y="162.50" text-anchor="end" class="label">Timeout / absent token</text>
+<rect x="180.00" y="120.75" width="1.00" height="73.50" fill="#9ecae1" rx="4"/>
+<rect x="180.16" y="120.75" width="460.40" height="73.50" fill="#3182bd" rx="4"/>
+<rect x="640.56" y="120.75" width="252.16" height="73.50" fill="#fd8d3c" rx="4"/>
+<rect x="892.72" y="120.75" width="1.00" height="73.50" fill="#31a354" rx="4"/>
+<text x="902.96" y="162.50" class="label">6.69s</text>
+<text x="166" y="337.50" text-anchor="end" class="label">Token detected</text>
+<rect x="180.00" y="295.75" width="1.00" height="73.50" fill="#9ecae1" rx="4"/>
+<rect x="180.07" y="295.75" width="260.46" height="73.50" fill="#3182bd" rx="4"/>
+<rect x="440.53" y="295.75" width="260.71" height="73.50" fill="#fd8d3c" rx="4"/>
+<rect x="701.24" y="295.75" width="1.00" height="73.50" fill="#31a354" rx="4"/>
+<text x="711.42" y="337.50" class="label">4.89s</text>
+<rect x="710" y="70" width="12" height="12" fill="#9ecae1"/>
+<text x="728" y="80" class="label">Barometer</text>
+<rect x="710" y="94" width="12" height="12" fill="#3182bd"/>
+<text x="728" y="104" class="label">Ultrasound</text>
+<rect x="710" y="118" width="12" height="12" fill="#fd8d3c"/>
+<text x="728" y="128" class="label">Audio</text>
+<rect x="710" y="142" width="12" height="12" fill="#31a354"/>
+<text x="728" y="152" class="label">DSVF</text>
+</svg>

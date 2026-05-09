@@ -3,6 +3,7 @@ package com.example.digitalsphere;
 import com.example.digitalsphere.helper.FakeAttendanceRepository;
 import com.example.digitalsphere.helper.FakeBleManager;
 import com.example.digitalsphere.helper.FakeProfessorView;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
 import com.example.digitalsphere.presenter.ProfessorPresenter;
 import org.junit.Before;
 import org.junit.Test;
@@ -311,6 +312,23 @@ public class ProfessorPresenterTest {
         presenter.startSession("CS101", "5");
         ble.simulateProfessorBeaconStarted();
         assertTrue(view.stopEnabled);
+    }
+
+    @Test
+    public void updateAmbientHash_activeSession_refreshesProfessorMetadata() {
+        float[] updatedHash = {0.2f, 0.4f, 0.6f, 0.8f, 0.7f, 0.5f, 0.3f, 0.1f};
+        UltrasoundSessionConfig config = UltrasoundSessionConfig.builder(18200, 18600)
+                .symbolDurationMs(40)
+                .repeatCount(3)
+                .build();
+
+        presenter.startSession("TEST02", "5", 0.0f, 4, null, config);
+        presenter.updateAmbientHash(updatedHash);
+
+        assertEquals(1, ble.professorUpdateCount);
+        assertEquals(4, ble.lastSessionToken);
+        assertArrayEquals(updatedHash, ble.lastAmbientHash, 0.0001f);
+        assertEquals(18200, ble.lastUltrasoundConfig.getF0());
     }
 
     // ── detach() safety ───────────────────────────────────────────────────

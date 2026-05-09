@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="540" viewBox="0 0 920 540">
+<style>text{font-family:Helvetica,Arial,sans-serif;fill:#222} .small{font-size:12px} .label{font-size:14px} .title{font-size:22px;font-weight:700} .axis{stroke:#444;stroke-width:1.2} .grid{stroke:#d0d0d0;stroke-width:1} </style>
+<text x="460.0" y="34" text-anchor="middle" class="title">Session Completion Across Baselines</text>
+<line x1="90" y1="430.00" x2="890" y2="430.00" class="grid"/>
+<text x="78" y="434.00" text-anchor="end" class="small">0%</text>
+<line x1="90" y1="358.00" x2="890" y2="358.00" class="grid"/>
+<text x="78" y="362.00" text-anchor="end" class="small">20%</text>
+<line x1="90" y1="286.00" x2="890" y2="286.00" class="grid"/>
+<text x="78" y="290.00" text-anchor="end" class="small">40%</text>
+<line x1="90" y1="214.00" x2="890" y2="214.00" class="grid"/>
+<text x="78" y="218.00" text-anchor="end" class="small">60%</text>
+<line x1="90" y1="142.00" x2="890" y2="142.00" class="grid"/>
+<text x="78" y="146.00" text-anchor="end" class="small">80%</text>
+<line x1="90" y1="70.00" x2="890" y2="70.00" class="grid"/>
+<text x="78" y="74.00" text-anchor="end" class="small">100%</text>
+<line x1="90" y1="70" x2="90" y2="430" class="axis"/>
+<line x1="90" y1="430" x2="890" y2="430" class="axis"/>
+<text x="20" y="250.0" transform="rotate(-90 20 250.0)" text-anchor="middle" class="label">Sessions completed (%)</text>
+<rect x="150.00" y="275.70" width="146.67" height="154.30" fill="#bdbdbd" rx="4"/>
+<text x="223.33" y="267.70" text-anchor="middle" class="label">42.9%</text>
+<text x="223.33" y="472" text-anchor="middle" class="label">First attempt</text>
+<rect x="416.67" y="327.15" width="146.67" height="102.85" fill="#6baed6" rx="4"/>
+<text x="490.00" y="319.15" text-anchor="middle" class="label">28.6%</text>
+<text x="490.00" y="472" text-anchor="middle" class="label">Strict ultrasound</text>
+<rect x="683.33" y="121.44" width="146.67" height="308.56" fill="#238b45" rx="4"/>
+<text x="756.67" y="113.44" text-anchor="middle" class="label">85.7%</text>
+<text x="756.67" y="472" text-anchor="middle" class="label">Observed</text>
+</svg>

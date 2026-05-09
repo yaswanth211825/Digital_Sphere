@@ -484,11 +484,15 @@ public final class DsvfAlgorithm {
     }
 
     /**
-     * Audio SVS = correlationScore × 0.70 + snrScore × 0.30.
+     * Audio SVS = cosineScore × 0.70 + snrScore × 0.30.
      *
      * <ul>
-     *   <li><b>correlationScore</b>: Pearson |r| mapped [0, 1] → trust
-     *       in the correlation result (high |r| = clear signal).</li>
+     *   <li><b>cosineScore</b>: cosine similarity of the two ambient hashes.
+     *       Used instead of Pearson because the 8-band time-domain RMS hash
+     *       produces systematically different absolute energy profiles across
+     *       OEM microphone hardware. Pearson collapses negative for legitimate
+     *       same-room matches when mean offsets differ cross-device; cosine
+     *       is mean-independent and works correctly in that scenario.</li>
      *   <li><b>snrScore</b>: clamp(SNR / {@value #AUDIO_EXCELLENT_SNR_DB}, 0, 1).
      *       High SNR → clean recording → trustworthy hash.</li>
      * </ul>
@@ -500,14 +504,10 @@ public final class DsvfAlgorithm {
 
         float[] sHash = r.getStudentAmbientHash();
         float[] pHash = r.getProfessorAmbientHash();
-        float corr = pearsonCorrelation(sHash, pHash);
-
-        // Use absolute correlation as a trust indicator:
-        // high |r| (positive or negative) means the measurement is decisive.
-        float correlationScore = clamp(Math.abs(corr));
+        float cosine = cosineSimilarity(sHash, pHash);
         float snrScore = clamp(r.getAudioSnrEstimate() / AUDIO_EXCELLENT_SNR_DB);
 
-        return clamp(AUDIO_SVS_CORR_WEIGHT * correlationScore
+        return clamp(AUDIO_SVS_CORR_WEIGHT * cosine
                    + AUDIO_SVS_SNR_WEIGHT * snrScore);
     }
 
@@ -558,11 +558,14 @@ public final class DsvfAlgorithm {
     }
 
     /**
-     * Audio presence = clamp((pearson + 1) / 2, 0, 1).
+     * Audio presence = cosine similarity of the two ambient hashes.
      *
-     * <p>Maps Pearson r from [−1, +1] to [0, 1]:
-     * +1.0 (identical room) → 1.0, 0.0 (uncorrelated) → 0.5,
-     * −1.0 (anti-correlated) → 0.0.</p>
+     * <p>For non-negative RMS vectors cosine ∈ [0, 1] directly — identical
+     * temporal energy profiles → 1.0, orthogonal profiles → 0.0. This is
+     * more appropriate than the Pearson mapping (r+1)/2 because cross-device
+     * mic frequency response differences shift the absolute energy of each
+     * time band without changing the relative shape, causing Pearson to
+     * go strongly negative while cosine stays ≥ 0.50 for same-room pairs.</p>
      *
      * @return presence score in [0.0, 1.0]. 0.0 if audio unavailable.
      */
@@ -571,9 +574,7 @@ public final class DsvfAlgorithm {
 
         float[] sHash = r.getStudentAmbientHash();
         float[] pHash = r.getProfessorAmbientHash();
-        float corr = pearsonCorrelation(sHash, pHash);
-
-        return clamp((corr + 1.0f) / 2.0f);
+        return cosineSimilarity(sHash, pHash);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -632,7 +633,7 @@ public final class DsvfAlgorithm {
      * @return Pearson r in [−1.0, +1.0], or 0.0 if either array is
      *         {@code null}, empty, length-1, or has zero variance.
      */
-    static float pearsonCorrelation(float[] a, float[] b) {
+    public static float pearsonCorrelation(float[] a, float[] b) {
         if (a == null || b == null || a.length == 0 || b.length == 0) return 0f;
         int n = Math.min(a.length, b.length);
         if (n < 2) return 0f;
@@ -660,6 +661,34 @@ public final class DsvfAlgorithm {
         if (denom < 1e-9f) return 0f;
 
         return cov / denom;
+    }
+
+    /**
+     * Cosine similarity between two float arrays.
+     *
+     * <p>For non-negative vectors (e.g. RMS energy hashes) the result is
+     * naturally in [0, 1]: identical vectors → 1.0, orthogonal → 0.0.
+     * Unlike Pearson, cosine is independent of the per-vector mean, making
+     * it robust to systematic amplitude offsets caused by OEM microphone
+     * frequency-response differences across device models.</p>
+     *
+     * @param a first array.
+     * @param b second array (must be same length as {@code a}).
+     * @return cosine similarity in [0.0, 1.0], or 0.0 if either array is
+     *         {@code null}, empty, or has zero norm.
+     */
+    public static float cosineSimilarity(float[] a, float[] b) {
+        if (a == null || b == null || a.length == 0 || b.length == 0) return 0f;
+        int n = Math.min(a.length, b.length);
+        float dot = 0f, normA = 0f, normB = 0f;
+        for (int i = 0; i < n; i++) {
+            dot   += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+        }
+        float denom = (float) (Math.sqrt(normA) * Math.sqrt(normB));
+        if (denom < 1e-9f) return 0f;
+        return clamp(dot / denom);
     }
 
     /**

@@ -17,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.example.digitalsphere.R;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -64,6 +65,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        // Init diagnostic logger — creates a new CSV file for this app launch
+        DiagLogger.init(this);
 
         // Register launcher in onCreate (required before first use)
         enableBtLauncher = registerForActivityResult(

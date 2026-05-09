@@ -1,0 +1,8 @@
+log_file,device_model,session_name,scan_session_index,expected_token,attempt_count,first_beacon_ms,in_range_ms,trigger_rssi,marked,marked_attempt_index,marked_latency_ms,first_attempt_marked,strict_ultrasound_success,fallback_success
+report_20260407_112902_student_1234.json,I2126,1234,1,2,1,4247.0,4278.0,-56.0,True,1,10779.0,True,False,True
+report_20260407_112902_student_1234.json,I2126,1234,2,2,7,98.0,120.0,-67.0,True,7,54193.0,False,True,False
+report_20260407_114459_student_cs101.json (1),V2518,cs101,1,2,1,192.0,199.0,-59.0,True,1,7081.0,True,False,True
+report_20260407_114459_student_cs101.json (1),V2518,cs101,2,2,1,115.0,120.0,-66.0,False,,,False,False,False
+report_20260407_114459_student_cs101.json (1),V2518,cs101,3,2,1,303.0,316.0,-60.0,True,1,5658.0,True,True,False
+report_20260407_114459_student_cs101.json (1),V2518,cs101,4,2,2,746.0,762.0,-63.0,True,2,14827.0,False,False,True
+report_20260407_114459_student_cs101.json (1),V2518,cs101,5,2,3,2305.0,2849.0,-74.0,True,3,25213.0,False,False,True

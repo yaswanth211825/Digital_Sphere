@@ -1,0 +1,108 @@
+{
+  "dataset": {
+    "log_files": [
+      "/Users/yash_2111825/Downloads/report_20260407_112902_student_1234.json",
+      "/Users/yash_2111825/Downloads/report_20260407_114459_student_cs101.json (1)"
+    ],
+    "device_count": 2,
+    "devices": [
+      {
+        "manufacturer": "vivo",
+        "model": "I2126",
+        "android": "14",
+        "sdk": 34,
+        "ble_advertise_support": "SUPPORTED",
+        "ble_scan_support": "AVAILABLE",
+        "mic_permission": "GRANTED",
+        "unprocessed_audio_support": "SUPPORTED",
+        "barometer_present": "NO",
+        "audiorecord_state": "INITIALIZED"
+      },
+      {
+        "manufacturer": "vivo",
+        "model": "V2518",
+        "android": "16",
+        "sdk": 36,
+        "ble_advertise_support": "SUPPORTED",
+        "ble_scan_support": "AVAILABLE",
+        "mic_permission": "GRANTED",
+        "unprocessed_audio_support": "SUPPORTED",
+        "barometer_present": "NO",
+        "audiorecord_state": "INITIALIZED"
+      }
+    ],
+    "scan_session_count": 7,
+    "verification_attempt_count": 16,
+    "barometer_unavailable_devices": 2,
+    "barometer_unavailable_device_pct": 100.0
+  },
+  "rates": {
+    "session_completion_observed_pct": 85.71,
+    "session_completion_first_attempt_pct": 42.86,
+    "session_completion_strict_ultrasound_pct": 28.57,
+    "observed_vs_first_attempt_relative_gain_pct": 100.0,
+    "observed_vs_strict_ultrasound_relative_gain_pct": 200.0,
+    "attempt_acceptance_pct": 37.5,
+    "ultrasound_timeout_attempt_pct": 81.25,
+    "successful_sessions_requiring_fallback_pct": 66.67
+  },
+  "latency_ms": {
+    "first_beacon_mean": 1143.71,
+    "first_beacon_median": 303.0,
+    "in_range_mean": 1234.86,
+    "in_range_median": 316.0,
+    "total_verify_mean": 6363.06,
+    "total_verify_median": 6547.5,
+    "baro_mean": 1.312,
+    "ultra_mean": 3966.188,
+    "audio_mean": 2379.812,
+    "dsvf_mean": 2.188,
+    "attendance_marked_mean": 19625.17,
+    "attendance_marked_median": 12803.0,
+    "detected_total_mean": 4901.0,
+    "detected_total_median": 5338.0,
+    "timeout_total_mean": 6700.46,
+    "timeout_total_median": 6580.0,
+    "detected_vs_timeout_mean_reduction_pct": 26.86,
+    "stage_share_pct": {
+      "barometer": 0.02,
+      "ultrasound": 62.33,
+      "audio": 37.4,
+      "dsvf": 0.03
+    },
+    "timeout_stage_means": {
+      "baro_ms": 1.462,
+      "ultra_ms": 4317.769,
+      "audio_ms": 2364.769,
+      "dsvf_ms": 2.308
+    },
+    "detected_stage_means": {
+      "baro_ms": 0.667,
+      "ultra_ms": 2442.667,
+      "audio_ms": 2445.0,
+      "dsvf_ms": 1.667
+    }
+  },
+  "outcomes": {
+    "attempt_status_counts": {
+      "FLAGGED": 5,
+      "PRESENT": 1,
+      "REJECTED_ROOM": 1,
+      "REJECTED_SCORE": 9
+    },
+    "accepted_attempt_status_counts": {
+      "FLAGGED": 5,
+      "PRESENT": 1
+    },
+    "matched_ultrasound_attempt_count": 2,
+    "detected_ultrasound_attempt_count": 3,
+    "timeout_ultrasound_attempt_count": 13,
+    "fallback_success_session_count": 4,
+    "strict_ultrasound_success_session_count": 2
+  },
+  "statistics": {
+    "ultrasound_latency_mann_whitney_u": 0.0,
+    "ultrasound_latency_mann_whitney_p_two_sided": 0.003571,
+    "ultrasound_latency_cliffs_delta": -1.0
+  }
+}

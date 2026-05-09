@@ -1,0 +1,3 @@
+manufacturer,model,android,sdk,ble_advertise_support,ble_scan_support,mic_permission,unprocessed_audio_support,barometer_present,audiorecord_state
+vivo,I2126,14,34,SUPPORTED,AVAILABLE,GRANTED,SUPPORTED,NO,INITIALIZED
+vivo,V2518,16,36,SUPPORTED,AVAILABLE,GRANTED,SUPPORTED,NO,INITIALIZED

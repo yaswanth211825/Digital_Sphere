@@ -6,6 +6,8 @@ import android.bluetooth.le.AdvertiseData;
 import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.os.ParcelUuid;
+import com.example.digitalsphere.data.audio.adaptive.UltrasoundSessionConfig;
+import com.example.digitalsphere.data.sensor.DiagLogger;
 import java.nio.ByteBuffer;                     // NEW — for packing/unpacking
 import java.nio.ByteOrder;                      // NEW — for consistent endianness
 
@@ -18,7 +20,7 @@ import java.nio.ByteOrder;                      // NEW — for consistent endian
  *   Flags .............. 3 bytes
  *   16-bit UUID list ... 4 bytes  (SESSION_UUID → 0xABCD)
  *   Manufacturer header  4 bytes  (length + type + company ID 0xFFFF)
- *   Manufacturer data .. 12 bytes ← [pressure 2B][token 2B][audio hash 8B]
+ *   Manufacturer data .. 16 bytes ← [pressure 2B][token 2B][audio hash 8B][adaptive cfg 4B]
  *                       ────────
  *                        15 bytes used → 16 bytes spare (well within budget)
  *
@@ -45,8 +47,10 @@ class BleAdvertiser {
     private static final int OFFSET_PRESSURE = 0;   // bytes 0-1
     private static final int OFFSET_TOKEN    = 2;   // bytes 2-3
     private static final int OFFSET_AUDIO    = 4;   // bytes 4-11
+    private static final int OFFSET_ADAPTIVE = 12;  // bytes 12-15
     private static final int AUDIO_HASH_BYTES = 8;
-    static final int HEADER_SIZE             = 12;    // total header bytes
+    private static final int ADAPTIVE_CONFIG_BYTES = 4;
+    static final int HEADER_SIZE             = 16;    // total header bytes
 
     interface Listener {
         void onStarted();
@@ -67,7 +71,11 @@ class BleAdvertiser {
      *                     ultrasound is not yet active.
      * @param listener     lifecycle callbacks.
      */
-    void start(float pressureHPa, int sessionToken, float[] ambientHash, Listener listener) {
+    void start(float pressureHPa,
+               int sessionToken,
+               float[] ambientHash,
+               UltrasoundSessionConfig ultrasoundConfig,
+               Listener listener) {
         BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
         if (adapter == null || !adapter.isEnabled()) {
             listener.onFailed("Bluetooth is not enabled. Please turn on Bluetooth.");
@@ -83,8 +91,75 @@ class BleAdvertiser {
             return;
         }
 
-        // NEW — pack pressure + token into 4 bytes of manufacturer data
-        byte[] payload = packPayload(pressureHPa, sessionToken, ambientHash);
+        startAdvertisingInternal(
+                pressureHPa,
+                sessionToken,
+                ambientHash,
+                ultrasoundConfig,
+                new AdvertiseCallback() {
+                    @Override public void onStartSuccess(AdvertiseSettings s) {
+                        listener.onStarted();
+                    }
+
+                    @Override public void onStartFailure(int errorCode) {
+                        DiagLogger.logBleAdvertiseError(errorCode, advertiseError(errorCode)); // DIAG
+                        listener.onFailed(advertiseError(errorCode));
+                    }
+                });
+    }
+
+    void stop() {
+        if (advertiser != null && callback != null) {
+            try { advertiser.stopAdvertising(callback); }
+            catch (IllegalStateException ignored) {}
+            callback = null;
+        }
+    }
+
+    /**
+     * Rebuilds the professor BLE payload while a session is active.
+     *
+     * <p>Android's legacy advertiser does not support in-place updates, so we
+     * stop the current advertisement and immediately restart it with the new
+     * metadata. The professor-side student scanner remains active.</p>
+     */
+    void updatePayload(float pressureHPa,
+                       int sessionToken,
+                       float[] ambientHash,
+                       UltrasoundSessionConfig ultrasoundConfig) {
+        if (advertiser == null) return;
+
+        if (callback != null) {
+            try { advertiser.stopAdvertising(callback); }
+            catch (IllegalStateException ignored) {}
+        }
+
+        startAdvertisingInternal(
+                pressureHPa,
+                sessionToken,
+                ambientHash,
+                ultrasoundConfig,
+                new AdvertiseCallback() {
+                    @Override public void onStartSuccess(AdvertiseSettings settingsInEffect) {
+                        // Refreshes are silent — the session is already running.
+                    }
+
+                    @Override public void onStartFailure(int errorCode) {
+                        DiagLogger.logBleAdvertiseError(errorCode, advertiseError(errorCode));
+                    }
+                });
+    }
+
+    private void startAdvertisingInternal(float pressureHPa,
+                                          int sessionToken,
+                                          float[] ambientHash,
+                                          UltrasoundSessionConfig ultrasoundConfig,
+                                          AdvertiseCallback nextCallback) {
+        if (advertiser == null) {
+            return;
+        }
+
+        byte[] payload = packPayload(pressureHPa, sessionToken, ambientHash, ultrasoundConfig);
 
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -94,26 +169,13 @@ class BleAdvertiser {
 
         AdvertiseData data = new AdvertiseData.Builder()
                 .addServiceUuid(ParcelUuid.fromString(SESSION_UUID))
-                .addManufacturerData(COMPANY_ID, payload)               // MODIFIED — was no manufacturer data
+                .addManufacturerData(COMPANY_ID, payload)
                 .setIncludeDeviceName(false)
                 .build();
 
-        callback = new AdvertiseCallback() {
-            @Override public void onStartSuccess(AdvertiseSettings s) { listener.onStarted(); }
-            @Override public void onStartFailure(int errorCode) {
-                listener.onFailed(advertiseError(errorCode));
-            }
-        };
-
+        callback = nextCallback;
+        DiagLogger.logAudioHashInPayload(payload); // DIAG: AUDIO_HASH_IN_PAYLOAD
         advertiser.startAdvertising(settings, data, callback);
-    }
-
-    void stop() {
-        if (advertiser != null && callback != null) {
-            try { advertiser.stopAdvertising(callback); }
-            catch (IllegalStateException ignored) {}
-            callback = null;
-        }
     }
 
     // ── NEW — Static pack / unpack helpers ────────────────────────────────
@@ -134,7 +196,10 @@ class BleAdvertiser {
      * @param token       16-bit session token. Masked to 0xFFFF.
      * @return 4-byte array: [pressure_hi, pressure_lo, token_hi, token_lo].
      */
-    static byte[] packPayload(float pressureHPa, int token, float[] ambientHash) {
+    static byte[] packPayload(float pressureHPa,
+                              int token,
+                              float[] ambientHash,
+                              UltrasoundSessionConfig ultrasoundConfig) {
         // Clamp to unsigned 16-bit range: 0 .. 65535 → 0.0 .. 6553.5 hPa
         int pressureEncoded = Math.max(0, Math.min(65535, (int) (pressureHPa * 10)));
         int tokenEncoded = token >= 0 ? ((token & 0xFFFF) + 1) : 0;
@@ -149,7 +214,14 @@ class BleAdvertiser {
             int quantized = Math.max(0, Math.min(255, Math.round(value * 255f)));
             buffer.put((byte) quantized);
         }
-        return buffer.array();
+
+        byte[] compactConfig = ultrasoundConfig != null ? ultrasoundConfig.toCompactBleBytes() : null;
+        for (int i = 0; i < ADAPTIVE_CONFIG_BYTES; i++) {
+            buffer.put(compactConfig != null && i < compactConfig.length ? compactConfig[i] : (byte) 0xFF);
+        }
+        byte[] result = buffer.array();
+        DiagLogger.logAudioHashPacked(result); // DIAG: AUDIO_HASH_PACKED
+        return result;
     }
 
     /**
@@ -198,6 +270,18 @@ class BleAdvertiser {
             anyNonZero = anyNonZero || raw != 0;
         }
         return anyNonZero ? hash : null;
+    }
+
+    static UltrasoundSessionConfig unpackAdaptiveConfig(byte[] data) {
+        if (data == null || data.length < OFFSET_ADAPTIVE + ADAPTIVE_CONFIG_BYTES) return null;
+
+        byte[] compact = new byte[ADAPTIVE_CONFIG_BYTES];
+        boolean anyDefined = false;
+        for (int i = 0; i < ADAPTIVE_CONFIG_BYTES; i++) {
+            compact[i] = data[OFFSET_ADAPTIVE + i];
+            anyDefined = anyDefined || (compact[i] & 0xFF) != 0xFF;
+        }
+        return anyDefined ? UltrasoundSessionConfig.fromCompactBleBytes(compact) : null;
     }
 
     // ── Unchanged ─────────────────────────────────────────────────────────

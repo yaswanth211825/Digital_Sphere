@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Exposes <filesDir>/diag_logs/ for FileProvider sharing -->
+    <files-path name="diag_logs" path="diag_logs/" />
+    <!-- Also expose attendance archive CSVs if needed later -->
+    <files-path name="attendance_archives" path="attendance_archives/" />
+    <!-- Session reports (GZIP JSON) for researcher email -->
+    <files-path name="session_reports" path="session_reports/" />
+</paths>
